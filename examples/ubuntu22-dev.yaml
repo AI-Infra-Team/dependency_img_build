@@ -1,0 +1,90 @@
+user: pa
+password: "74123"
+sudo: true
+base_image: "ubuntu:22.04"
+image_name: "ubuntu22-dev"
+container_name: "ubuntu22-dev-container"
+image_tag: "latest"
+ssh_port: 2222
+
+# Environment variable inheritance configuration
+inherit_env: true          # Enable environment variable inheritance
+inherit_proxy: true        # Inherit proxy settings (http_proxy, https_proxy, etc.)
+inherit_locale: false      # Inherit locale settings (LANG, LC_*, etc.)
+inherit_timezone: true     # Inherit timezone settings (TZ)
+inherit_custom_env:        # Additional environment variables to inherit
+  - "CARGO_*"             # Rust Cargo settings
+  - "RUSTUP_*"            # Rust toolchain settings
+  - "NPM_*"               # NPM configuration
+exclude_env:               # Environment variables to exclude
+  - "TEMP_VAR"
+  - "SECRET_*"
+
+apt_packages:
+  - openssh-server
+  - sudo
+  - curl
+  - wget
+  - git
+  - vim
+  - nano
+  - htop
+  - build-essential
+  - cmake
+  - pkg-config
+  - libssl-dev
+  - ca-certificates
+  - gnupg
+  - lsb-release
+
+stages:
+  - name: setup_ssh
+    dependencies: []
+    commands:
+      - mkdir -p /var/run/sshd
+      - echo 'root:root123' | chpasswd
+      - sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
+      - sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
+      - sed -i 's/Port 22/Port 2222/' /etc/ssh/sshd_config
+
+  - name: create_user
+    dependencies: [setup_ssh]
+    commands:
+      - useradd -m -s /bin/bash pa
+      - echo 'pa:74123' | chpasswd
+      - usermod -aG sudo pa
+      - echo 'pa ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
+
+  - name: install_rust
+    dependencies: [create_user]
+    commands:
+      - su - pa -c 'curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y'
+      - su - pa -c 'echo "source ~/.cargo/env" >> ~/.bashrc'
+
+  - name: install_cpp_tools
+    dependencies: [create_user]
+    commands:
+      - apt-get update && apt-get install -y g++ gdb valgrind clang
+      - apt-get install -y libboost-all-dev
+
+  - name: setup_docker_access
+    dependencies: [create_user]
+    commands:
+      - apt-get update && apt-get install -y docker.io
+      - usermod -aG docker pa
+      - systemctl enable docker || true
+
+env_scripts:
+  - echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> /home/pa/.bashrc
+  - echo 'cd /opt' >> /home/pa/.bashrc
+
+expose_ports:
+  - "2222:2222"
+
+volumes:
+  - "/var/run/docker.sock:/var/run/docker.sock"
+  - "/opt/devcon:/opt"
+
+startup_commands:
+  - service ssh start
+  - service docker start || true

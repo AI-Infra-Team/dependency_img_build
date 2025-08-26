@@ -1,0 +1,98 @@
+{
+  "builds": [],
+  "step_cache": {},
+  "stage_history": {
+    "setup_ssh": [
+      {
+        "timestamp": "2025-08-26T06:27:18.220586",
+        "changed": true,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-26T06:34:56.636142",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-26T08:16:33.536767",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      }
+    ],
+    "create_user": [
+      {
+        "timestamp": "2025-08-26T06:27:18.220586",
+        "changed": true,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-26T06:34:56.636142",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-26T08:16:33.536767",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      }
+    ],
+    "install_rust": [
+      {
+        "timestamp": "2025-08-26T06:27:18.220586",
+        "changed": true,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-26T06:34:56.636142",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-26T08:16:33.536767",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      }
+    ],
+    "install_cpp_tools": [
+      {
+        "timestamp": "2025-08-26T06:27:18.220586",
+        "changed": true,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-26T06:34:56.636142",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-26T08:16:33.536767",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      }
+    ],
+    "setup_docker_access": [
+      {
+        "timestamp": "2025-08-26T06:27:18.220586",
+        "changed": true,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-26T06:34:56.636142",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-26T08:16:33.536767",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      }
+    ]
+  },
+  "stage_hashes": {
+    "setup_ssh": "cc0761932cae1022",
+    "create_user": "608de571c14d2907",
+    "install_rust": "768953cfb2171c75",
+    "install_cpp_tools": "c43d6c99063bf09c",
+    "setup_docker_access": "106121faf2b23e52"
+  }
+}

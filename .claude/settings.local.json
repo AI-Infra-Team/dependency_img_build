@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p examples)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
