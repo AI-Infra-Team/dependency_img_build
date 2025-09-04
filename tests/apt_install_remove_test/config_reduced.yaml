@@ -1,0 +1,17 @@
+image_name: test-apt-demo-reduced
+container_name: test-apt-demo-reduced-container
+base_image: ubuntu:22.04
+user: testuser
+sudo: true
+
+heavy_setup:
+  apt_packages:
+    - curl
+    - wget
+    # htop removed to test removal functionality
+
+light_setup:
+  configs:
+    - name: test_config
+      commands:
+        - mkdir -p /home/testuser && echo "Testing apt removal - htop should be removed" > /home/testuser/test.txt

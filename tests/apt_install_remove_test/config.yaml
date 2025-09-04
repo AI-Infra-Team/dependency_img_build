@@ -1,0 +1,17 @@
+image_name: test-apt-demo
+container_name: test-apt-demo-container
+base_image: ubuntu:22.04
+user: testuser
+sudo: true
+
+heavy_setup:
+  apt_packages:
+    - curl
+    - wget
+    - htop
+
+light_setup:
+  configs:
+    - name: test_config
+      commands:
+        - mkdir -p /home/testuser && echo "Testing apt install and removal" > /home/testuser/test.txt

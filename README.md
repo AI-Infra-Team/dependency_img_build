@@ -28,7 +28,7 @@ A Python-based system for building Docker images with dynamic Dockerfiles and mu
 
 3. **Build your image**:
    ```bash
-   python cli.py build -c build-config.json -t myapp:latest
+   python cli.py build -c build-config.json
    ```
 
 ## Configuration Format
@@ -59,7 +59,7 @@ Create a JSON or YAML file describing your build requirements:
 
 ## CLI Commands
 
-- `build -c CONFIG -t TAG`: Build Docker image
+- `build -c CONFIG`: Build Docker image using configuration file
 - `status [-c CONFIG]`: Show build status and cache efficiency
 - `clean [--max-age DAYS]`: Clean old cache entries
 - `init [-o OUTPUT]`: Create example configuration

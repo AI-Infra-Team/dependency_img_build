@@ -1,98 +1,1556 @@
 {
-  "builds": [],
-  "step_cache": {},
+  "builds": [
+    {
+      "timestamp": "2025-08-30T11:01:45.883033",
+      "image_tag": "my-app:latest",
+      "steps": [
+        {
+          "stage_name": "apt_openssh_server",
+          "command": "apt-get update && apt-get install -y openssh-server",
+          "hash": "2070ba41ad07",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "apt_sudo",
+          "command": "apt-get install -y sudo",
+          "hash": "559ab22515ad",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "apt_curl",
+          "command": "apt-get install -y curl",
+          "hash": "47027ec4a05f",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "apt_wget",
+          "command": "apt-get install -y wget",
+          "hash": "f655ca26c5b8",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "apt_git",
+          "command": "apt-get install -y git",
+          "hash": "e8c391026082",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "apt_vim",
+          "command": "apt-get install -y vim",
+          "hash": "30db058d88bc",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "apt_nano",
+          "command": "apt-get install -y nano",
+          "hash": "c23dc377db5a",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "apt_htop",
+          "command": "apt-get install -y htop",
+          "hash": "0171b38cee71",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "apt_build_essential",
+          "command": "apt-get install -y build-essential",
+          "hash": "c853038b85bb",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "apt_cmake",
+          "command": "apt-get install -y cmake",
+          "hash": "2083dda02c4e",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "apt_pkg_config",
+          "command": "apt-get install -y pkg-config",
+          "hash": "30fd3bc4552e",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "apt_libssl_dev",
+          "command": "apt-get install -y libssl-dev",
+          "hash": "cb728e620e86",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "apt_ca_certificates",
+          "command": "apt-get install -y ca-certificates",
+          "hash": "3115b49caee2",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "apt_gnupg",
+          "command": "apt-get install -y gnupg",
+          "hash": "0e85e495e78e",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "apt_lsb_release",
+          "command": "apt-get install -y lsb-release && rm -rf /var/lib/apt/lists/*",
+          "hash": "2f3fe44a7d3a",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "env_script_0",
+          "command": "echo 'export PATH=\"$HOME/.cargo/bin:$PATH\"' >> /home/pa/.bashrc",
+          "hash": "d5816109b151",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "env_script_1",
+          "command": "echo 'cd /opt' >> /home/pa/.bashrc",
+          "hash": "e715498edb98",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "setup_ssh",
+          "command": "mkdir -p /var/run/sshd",
+          "hash": "11764f277806",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "setup_ssh",
+          "command": "echo 'root:root123' | chpasswd",
+          "hash": "2ff77ea61c69",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "setup_ssh",
+          "command": "sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config",
+          "hash": "3e309c71e4a1",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "setup_ssh",
+          "command": "sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config",
+          "hash": "558579e27d71",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "setup_ssh",
+          "command": "sed -i 's/Port 22/Port 2222/' /etc/ssh/sshd_config",
+          "hash": "4d80b1497ea3",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "create_user",
+          "command": "useradd -m -s /bin/bash pa || true",
+          "hash": "38b0d97622fa",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "create_user",
+          "command": "echo 'pa:74123' | chpasswd",
+          "hash": "d52a9f727fa7",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "create_user",
+          "command": "usermod -aG sudo pa || true",
+          "hash": "e7ab06b997bd",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "create_user",
+          "command": "echo 'pa ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers",
+          "hash": "46d2a10e1262",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "install_rust",
+          "command": "curl --proto \"=https\" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y",
+          "hash": "abada952b41a",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "install_rust",
+          "command": "echo 'source ~/.cargo/env' >> ~/.bashrc",
+          "hash": "5cc2996dfb37",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "install_cpp_tools",
+          "command": "apt-get update && apt-get install -y g++ gdb valgrind clang",
+          "hash": "eac0faf6abd9",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "install_cpp_tools",
+          "command": "apt-get install -y libboost-all-dev",
+          "hash": "dc33588324e3",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "setup_docker_access",
+          "command": "apt-get update && apt-get install -y docker.io",
+          "hash": "d195d43df637",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "setup_docker_access",
+          "command": "usermod -aG docker pa || true",
+          "hash": "0fa78091240f",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "setup_docker_access",
+          "command": "systemctl enable docker || true",
+          "hash": "a75faba09b40",
+          "cached": false,
+          "cache_level": null
+        }
+      ]
+    },
+    {
+      "timestamp": "2025-08-30T15:12:21.973683",
+      "image_tag": "my-app:latest",
+      "steps": [
+        {
+          "stage_name": "apt_openssh_server",
+          "command": "apt-get update && apt-get install -y openssh-server",
+          "hash": "2070ba41ad07",
+          "cached": true,
+          "cache_level": "local"
+        },
+        {
+          "stage_name": "apt_sudo",
+          "command": "apt-get install -y sudo",
+          "hash": "559ab22515ad",
+          "cached": true,
+          "cache_level": "local"
+        },
+        {
+          "stage_name": "apt_curl",
+          "command": "apt-get install -y curl",
+          "hash": "47027ec4a05f",
+          "cached": true,
+          "cache_level": "local"
+        },
+        {
+          "stage_name": "apt_wget",
+          "command": "apt-get install -y wget",
+          "hash": "f655ca26c5b8",
+          "cached": true,
+          "cache_level": "local"
+        },
+        {
+          "stage_name": "apt_git",
+          "command": "apt-get install -y git",
+          "hash": "e8c391026082",
+          "cached": true,
+          "cache_level": "local"
+        },
+        {
+          "stage_name": "apt_vim",
+          "command": "apt-get install -y vim",
+          "hash": "30db058d88bc",
+          "cached": true,
+          "cache_level": "local"
+        },
+        {
+          "stage_name": "apt_nano",
+          "command": "apt-get install -y nano",
+          "hash": "c23dc377db5a",
+          "cached": true,
+          "cache_level": "local"
+        },
+        {
+          "stage_name": "apt_htop",
+          "command": "apt-get install -y htop",
+          "hash": "0171b38cee71",
+          "cached": true,
+          "cache_level": "local"
+        },
+        {
+          "stage_name": "apt_build_essential",
+          "command": "apt-get install -y build-essential",
+          "hash": "c853038b85bb",
+          "cached": true,
+          "cache_level": "local"
+        },
+        {
+          "stage_name": "apt_cmake",
+          "command": "apt-get install -y cmake",
+          "hash": "2083dda02c4e",
+          "cached": true,
+          "cache_level": "local"
+        },
+        {
+          "stage_name": "apt_pkg_config",
+          "command": "apt-get install -y pkg-config",
+          "hash": "30fd3bc4552e",
+          "cached": true,
+          "cache_level": "local"
+        },
+        {
+          "stage_name": "apt_libssl_dev",
+          "command": "apt-get install -y libssl-dev",
+          "hash": "cb728e620e86",
+          "cached": true,
+          "cache_level": "local"
+        },
+        {
+          "stage_name": "apt_ca_certificates",
+          "command": "apt-get install -y ca-certificates",
+          "hash": "3115b49caee2",
+          "cached": true,
+          "cache_level": "local"
+        },
+        {
+          "stage_name": "apt_gnupg",
+          "command": "apt-get install -y gnupg",
+          "hash": "0e85e495e78e",
+          "cached": true,
+          "cache_level": "local"
+        },
+        {
+          "stage_name": "apt_lsb_release",
+          "command": "apt-get install -y lsb-release",
+          "hash": "8afb25760a41",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "apt_cleanup",
+          "command": "rm -rf /var/lib/apt/lists/*",
+          "hash": "226193a84a64",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "env_script_0",
+          "command": "echo 'export PATH=\"$HOME/.cargo/bin:$PATH\"' >> /home/pa/.bashrc",
+          "hash": "d5816109b151",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "env_script_1",
+          "command": "echo 'cd /opt' >> /home/pa/.bashrc",
+          "hash": "e715498edb98",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "setup_ssh",
+          "command": "mkdir -p /var/run/sshd",
+          "hash": "11764f277806",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "setup_ssh",
+          "command": "echo 'root:root123' | chpasswd",
+          "hash": "2ff77ea61c69",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "setup_ssh",
+          "command": "sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config",
+          "hash": "3e309c71e4a1",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "setup_ssh",
+          "command": "sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config",
+          "hash": "558579e27d71",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "setup_ssh",
+          "command": "sed -i 's/Port 22/Port 2222/' /etc/ssh/sshd_config",
+          "hash": "4d80b1497ea3",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "create_user",
+          "command": "useradd -m -s /bin/bash pa || true",
+          "hash": "38b0d97622fa",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "create_user",
+          "command": "echo 'pa:74123' | chpasswd",
+          "hash": "d52a9f727fa7",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "create_user",
+          "command": "usermod -aG sudo pa || true",
+          "hash": "e7ab06b997bd",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "create_user",
+          "command": "echo 'pa ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers",
+          "hash": "46d2a10e1262",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "install_rust",
+          "command": "curl --proto \"=https\" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y",
+          "hash": "abada952b41a",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "install_rust",
+          "command": "echo 'source ~/.cargo/env' >> ~/.bashrc",
+          "hash": "5cc2996dfb37",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "install_cpp_tools",
+          "command": "apt-get update && apt-get install -y g++ gdb valgrind clang",
+          "hash": "eac0faf6abd9",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "install_cpp_tools",
+          "command": "apt-get install -y libboost-all-dev",
+          "hash": "dc33588324e3",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "setup_docker_access",
+          "command": "apt-get update && apt-get install -y docker.io",
+          "hash": "d195d43df637",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "setup_docker_access",
+          "command": "usermod -aG docker pa || true",
+          "hash": "0fa78091240f",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "setup_docker_access",
+          "command": "systemctl enable docker || true",
+          "hash": "a75faba09b40",
+          "cached": false,
+          "cache_level": null
+        }
+      ]
+    },
+    {
+      "timestamp": "2025-09-01T05:15:36.688187",
+      "image_tag": "ubuntu22-dev:latest",
+      "steps": []
+    },
+    {
+      "timestamp": "2025-09-01T05:40:32.932660",
+      "image_tag": "ubuntu22-dev:latest",
+      "steps": []
+    },
+    {
+      "timestamp": "2025-09-01T05:53:24.228294",
+      "image_tag": "ubuntu22-dev:latest",
+      "steps": []
+    },
+    {
+      "timestamp": "2025-09-01T06:57:47.229847",
+      "image_tag": "ubuntu22-dev:latest",
+      "steps": [
+        {
+          "stage_name": "apt_openssh_server",
+          "command": "apt-get update && apt-get install -y openssh-server",
+          "hash": "2070ba41ad07",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "apt_sudo",
+          "command": "apt-get install -y sudo",
+          "hash": "559ab22515ad",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "apt_curl",
+          "command": "apt-get install -y curl",
+          "hash": "47027ec4a05f",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "apt_wget",
+          "command": "apt-get install -y wget",
+          "hash": "f655ca26c5b8",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "apt_git",
+          "command": "apt-get install -y git",
+          "hash": "e8c391026082",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "apt_vim",
+          "command": "apt-get install -y vim",
+          "hash": "30db058d88bc",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "apt_nano",
+          "command": "apt-get install -y nano",
+          "hash": "c23dc377db5a",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "apt_htop",
+          "command": "apt-get install -y htop",
+          "hash": "0171b38cee71",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "apt_build_essential",
+          "command": "apt-get install -y build-essential",
+          "hash": "c853038b85bb",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "apt_cmake",
+          "command": "apt-get install -y cmake",
+          "hash": "2083dda02c4e",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "apt_pkg_config",
+          "command": "apt-get install -y pkg-config",
+          "hash": "30fd3bc4552e",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "apt_libssl_dev",
+          "command": "apt-get install -y libssl-dev",
+          "hash": "cb728e620e86",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "apt_ca_certificates",
+          "command": "apt-get install -y ca-certificates",
+          "hash": "3115b49caee2",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "apt_gnupg",
+          "command": "apt-get install -y gnupg",
+          "hash": "0e85e495e78e",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "apt_lsb_release",
+          "command": "apt-get install -y lsb-release",
+          "hash": "8afb25760a41",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "apt_net_tools",
+          "command": "apt-get install -y net-tools",
+          "hash": "18e27d66b766",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "apt_g++",
+          "command": "apt-get install -y g++",
+          "hash": "d52dbf4ed852",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "apt_gdb",
+          "command": "apt-get install -y gdb",
+          "hash": "2e2ba68b37ff",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "apt_valgrind",
+          "command": "apt-get install -y valgrind",
+          "hash": "56d9f9de6d1e",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "apt_clang",
+          "command": "apt-get install -y clang",
+          "hash": "0314d73c0fff",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "apt_libboost_all_dev",
+          "command": "apt-get install -y libboost-all-dev",
+          "hash": "807030930bab",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "apt_docker.io",
+          "command": "apt-get install -y docker.io",
+          "hash": "b47b184e6d67",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "apt_cleanup",
+          "command": "rm -rf /var/lib/apt/lists/*",
+          "hash": "226193a84a64",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "create_user_0",
+          "command": "useradd -m -s /bin/bash pa || true",
+          "hash": "38b0d97622fa",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "create_user_1",
+          "command": "echo 'pa:74123' | chpasswd",
+          "hash": "d52a9f727fa7",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "create_user_2",
+          "command": "usermod -aG sudo pa || true",
+          "hash": "e7ab06b997bd",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "create_user_3",
+          "command": "echo 'pa ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers",
+          "hash": "46d2a10e1262",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "install_rust_0",
+          "command": "curl --proto \"=https\" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y",
+          "hash": "abada952b41a",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "install_rust_1",
+          "command": "echo 'source ~/.cargo/env' >> ~/.bashrc",
+          "hash": "5cc2996dfb37",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "setup_docker_access_0",
+          "command": "usermod -aG docker pa || true",
+          "hash": "0fa78091240f",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "setup_docker_access_1",
+          "command": "systemctl enable docker || true",
+          "hash": "a75faba09b40",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "light_setup_ssh_config_0",
+          "command": "mkdir -p /var/run/sshd",
+          "hash": "2c0e20f515f5",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "light_setup_ssh_config_1",
+          "command": "echo 'root:root123' | chpasswd",
+          "hash": "c0aeeae57753",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "light_setup_ssh_config_2",
+          "command": "sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config",
+          "hash": "ff58996e4bf2",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "light_setup_ssh_config_3",
+          "command": "sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config",
+          "hash": "449678901b49",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "light_setup_ssh_config_4",
+          "command": "sed -i 's/Port 22/Port 2222/' /etc/ssh/sshd_config",
+          "hash": "1bdfd91db404",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "light_setup_environment_0",
+          "command": "echo 'export PATH=\"$HOME/.cargo/bin:$PATH\"' >> /home/pa/.bashrc",
+          "hash": "b8d8162d0121",
+          "cached": false,
+          "cache_level": null
+        },
+        {
+          "stage_name": "light_setup_environment_1",
+          "command": "echo 'cd /opt' >> /home/pa/.bashrc",
+          "hash": "6db9ba3e3d74",
+          "cached": false,
+          "cache_level": null
+        }
+      ]
+    }
+  ],
+  "step_cache": {
+    "2070ba41ad07": {
+      "stage_name": "apt_openssh_server",
+      "command": "apt-get update && apt-get install -y openssh-server",
+      "last_used": "2025-09-01T06:57:47.229874",
+      "cache_level": null
+    },
+    "559ab22515ad": {
+      "stage_name": "apt_sudo",
+      "command": "apt-get install -y sudo",
+      "last_used": "2025-09-01T06:57:47.229876",
+      "cache_level": null
+    },
+    "47027ec4a05f": {
+      "stage_name": "apt_curl",
+      "command": "apt-get install -y curl",
+      "last_used": "2025-09-01T06:57:47.229877",
+      "cache_level": null
+    },
+    "f655ca26c5b8": {
+      "stage_name": "apt_wget",
+      "command": "apt-get install -y wget",
+      "last_used": "2025-09-01T06:57:47.229878",
+      "cache_level": null
+    },
+    "e8c391026082": {
+      "stage_name": "apt_git",
+      "command": "apt-get install -y git",
+      "last_used": "2025-09-01T06:57:47.229879",
+      "cache_level": null
+    },
+    "30db058d88bc": {
+      "stage_name": "apt_vim",
+      "command": "apt-get install -y vim",
+      "last_used": "2025-09-01T06:57:47.229880",
+      "cache_level": null
+    },
+    "c23dc377db5a": {
+      "stage_name": "apt_nano",
+      "command": "apt-get install -y nano",
+      "last_used": "2025-09-01T06:57:47.229880",
+      "cache_level": null
+    },
+    "0171b38cee71": {
+      "stage_name": "apt_htop",
+      "command": "apt-get install -y htop",
+      "last_used": "2025-09-01T06:57:47.229881",
+      "cache_level": null
+    },
+    "c853038b85bb": {
+      "stage_name": "apt_build_essential",
+      "command": "apt-get install -y build-essential",
+      "last_used": "2025-09-01T06:57:47.229882",
+      "cache_level": null
+    },
+    "2083dda02c4e": {
+      "stage_name": "apt_cmake",
+      "command": "apt-get install -y cmake",
+      "last_used": "2025-09-01T06:57:47.229883",
+      "cache_level": null
+    },
+    "30fd3bc4552e": {
+      "stage_name": "apt_pkg_config",
+      "command": "apt-get install -y pkg-config",
+      "last_used": "2025-09-01T06:57:47.229884",
+      "cache_level": null
+    },
+    "cb728e620e86": {
+      "stage_name": "apt_libssl_dev",
+      "command": "apt-get install -y libssl-dev",
+      "last_used": "2025-09-01T06:57:47.229884",
+      "cache_level": null
+    },
+    "3115b49caee2": {
+      "stage_name": "apt_ca_certificates",
+      "command": "apt-get install -y ca-certificates",
+      "last_used": "2025-09-01T06:57:47.229885",
+      "cache_level": null
+    },
+    "0e85e495e78e": {
+      "stage_name": "apt_gnupg",
+      "command": "apt-get install -y gnupg",
+      "last_used": "2025-09-01T06:57:47.229886",
+      "cache_level": null
+    },
+    "2f3fe44a7d3a": {
+      "stage_name": "apt_lsb_release",
+      "command": "apt-get install -y lsb-release && rm -rf /var/lib/apt/lists/*",
+      "last_used": "2025-08-30T11:01:45.883103",
+      "cache_level": null
+    },
+    "d5816109b151": {
+      "stage_name": "env_script_0",
+      "command": "echo 'export PATH=\"$HOME/.cargo/bin:$PATH\"' >> /home/pa/.bashrc",
+      "last_used": "2025-08-30T15:12:21.973747",
+      "cache_level": null
+    },
+    "e715498edb98": {
+      "stage_name": "env_script_1",
+      "command": "echo 'cd /opt' >> /home/pa/.bashrc",
+      "last_used": "2025-08-30T15:12:21.973748",
+      "cache_level": null
+    },
+    "11764f277806": {
+      "stage_name": "setup_ssh",
+      "command": "mkdir -p /var/run/sshd",
+      "last_used": "2025-08-30T15:12:21.973749",
+      "cache_level": null
+    },
+    "2ff77ea61c69": {
+      "stage_name": "setup_ssh",
+      "command": "echo 'root:root123' | chpasswd",
+      "last_used": "2025-08-30T15:12:21.973751",
+      "cache_level": null
+    },
+    "3e309c71e4a1": {
+      "stage_name": "setup_ssh",
+      "command": "sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config",
+      "last_used": "2025-08-30T15:12:21.973752",
+      "cache_level": null
+    },
+    "558579e27d71": {
+      "stage_name": "setup_ssh",
+      "command": "sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config",
+      "last_used": "2025-08-30T15:12:21.973753",
+      "cache_level": null
+    },
+    "4d80b1497ea3": {
+      "stage_name": "setup_ssh",
+      "command": "sed -i 's/Port 22/Port 2222/' /etc/ssh/sshd_config",
+      "last_used": "2025-08-30T15:12:21.973754",
+      "cache_level": null
+    },
+    "38b0d97622fa": {
+      "stage_name": "create_user_0",
+      "command": "useradd -m -s /bin/bash pa || true",
+      "last_used": "2025-09-01T06:57:47.229893",
+      "cache_level": null
+    },
+    "d52a9f727fa7": {
+      "stage_name": "create_user_1",
+      "command": "echo 'pa:74123' | chpasswd",
+      "last_used": "2025-09-01T06:57:47.229894",
+      "cache_level": null
+    },
+    "e7ab06b997bd": {
+      "stage_name": "create_user_2",
+      "command": "usermod -aG sudo pa || true",
+      "last_used": "2025-09-01T06:57:47.229895",
+      "cache_level": null
+    },
+    "46d2a10e1262": {
+      "stage_name": "create_user_3",
+      "command": "echo 'pa ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers",
+      "last_used": "2025-09-01T06:57:47.229896",
+      "cache_level": null
+    },
+    "abada952b41a": {
+      "stage_name": "install_rust_0",
+      "command": "curl --proto \"=https\" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y",
+      "last_used": "2025-09-01T06:57:47.229897",
+      "cache_level": null
+    },
+    "5cc2996dfb37": {
+      "stage_name": "install_rust_1",
+      "command": "echo 'source ~/.cargo/env' >> ~/.bashrc",
+      "last_used": "2025-09-01T06:57:47.229898",
+      "cache_level": null
+    },
+    "eac0faf6abd9": {
+      "stage_name": "install_cpp_tools",
+      "command": "apt-get update && apt-get install -y g++ gdb valgrind clang",
+      "last_used": "2025-08-30T15:12:21.973763",
+      "cache_level": null
+    },
+    "dc33588324e3": {
+      "stage_name": "install_cpp_tools",
+      "command": "apt-get install -y libboost-all-dev",
+      "last_used": "2025-08-30T15:12:21.973764",
+      "cache_level": null
+    },
+    "d195d43df637": {
+      "stage_name": "setup_docker_access",
+      "command": "apt-get update && apt-get install -y docker.io",
+      "last_used": "2025-08-30T15:12:21.973765",
+      "cache_level": null
+    },
+    "0fa78091240f": {
+      "stage_name": "setup_docker_access_0",
+      "command": "usermod -aG docker pa || true",
+      "last_used": "2025-09-01T06:57:47.229898",
+      "cache_level": null
+    },
+    "a75faba09b40": {
+      "stage_name": "setup_docker_access_1",
+      "command": "systemctl enable docker || true",
+      "last_used": "2025-09-01T06:57:47.229899",
+      "cache_level": null
+    },
+    "8afb25760a41": {
+      "stage_name": "apt_lsb_release",
+      "command": "apt-get install -y lsb-release",
+      "last_used": "2025-09-01T06:57:47.229886",
+      "cache_level": null
+    },
+    "226193a84a64": {
+      "stage_name": "apt_cleanup",
+      "command": "rm -rf /var/lib/apt/lists/*",
+      "last_used": "2025-09-01T06:57:47.229892",
+      "cache_level": null
+    },
+    "18e27d66b766": {
+      "stage_name": "apt_net_tools",
+      "command": "apt-get install -y net-tools",
+      "last_used": "2025-09-01T06:57:47.229887",
+      "cache_level": null
+    },
+    "d52dbf4ed852": {
+      "stage_name": "apt_g++",
+      "command": "apt-get install -y g++",
+      "last_used": "2025-09-01T06:57:47.229888",
+      "cache_level": null
+    },
+    "2e2ba68b37ff": {
+      "stage_name": "apt_gdb",
+      "command": "apt-get install -y gdb",
+      "last_used": "2025-09-01T06:57:47.229889",
+      "cache_level": null
+    },
+    "56d9f9de6d1e": {
+      "stage_name": "apt_valgrind",
+      "command": "apt-get install -y valgrind",
+      "last_used": "2025-09-01T06:57:47.229889",
+      "cache_level": null
+    },
+    "0314d73c0fff": {
+      "stage_name": "apt_clang",
+      "command": "apt-get install -y clang",
+      "last_used": "2025-09-01T06:57:47.229890",
+      "cache_level": null
+    },
+    "807030930bab": {
+      "stage_name": "apt_libboost_all_dev",
+      "command": "apt-get install -y libboost-all-dev",
+      "last_used": "2025-09-01T06:57:47.229891",
+      "cache_level": null
+    },
+    "b47b184e6d67": {
+      "stage_name": "apt_docker.io",
+      "command": "apt-get install -y docker.io",
+      "last_used": "2025-09-01T06:57:47.229892",
+      "cache_level": null
+    },
+    "2c0e20f515f5": {
+      "stage_name": "light_setup_ssh_config_0",
+      "command": "mkdir -p /var/run/sshd",
+      "last_used": "2025-09-01T06:57:47.229900",
+      "cache_level": null
+    },
+    "c0aeeae57753": {
+      "stage_name": "light_setup_ssh_config_1",
+      "command": "echo 'root:root123' | chpasswd",
+      "last_used": "2025-09-01T06:57:47.229902",
+      "cache_level": null
+    },
+    "ff58996e4bf2": {
+      "stage_name": "light_setup_ssh_config_2",
+      "command": "sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config",
+      "last_used": "2025-09-01T06:57:47.229903",
+      "cache_level": null
+    },
+    "449678901b49": {
+      "stage_name": "light_setup_ssh_config_3",
+      "command": "sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config",
+      "last_used": "2025-09-01T06:57:47.229904",
+      "cache_level": null
+    },
+    "1bdfd91db404": {
+      "stage_name": "light_setup_ssh_config_4",
+      "command": "sed -i 's/Port 22/Port 2222/' /etc/ssh/sshd_config",
+      "last_used": "2025-09-01T06:57:47.229904",
+      "cache_level": null
+    },
+    "b8d8162d0121": {
+      "stage_name": "light_setup_environment_0",
+      "command": "echo 'export PATH=\"$HOME/.cargo/bin:$PATH\"' >> /home/pa/.bashrc",
+      "last_used": "2025-09-01T06:57:47.229905",
+      "cache_level": null
+    },
+    "6db9ba3e3d74": {
+      "stage_name": "light_setup_environment_1",
+      "command": "echo 'cd /opt' >> /home/pa/.bashrc",
+      "last_used": "2025-09-01T06:57:47.229906",
+      "cache_level": null
+    }
+  },
   "stage_history": {
     "setup_ssh": [
       {
-        "timestamp": "2025-08-26T06:27:18.220586",
+        "timestamp": "2025-08-27T15:28:33.647021",
         "changed": true,
         "image_tag": "my-app:latest"
       },
       {
-        "timestamp": "2025-08-26T06:34:56.636142",
+        "timestamp": "2025-08-28T09:35:35.351579",
         "changed": false,
         "image_tag": "my-app:latest"
       },
       {
-        "timestamp": "2025-08-26T08:16:33.536767",
+        "timestamp": "2025-08-28T12:02:59.236280",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T12:36:08.110362",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T13:11:56.933479",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T14:16:30.018178",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T14:17:01.198905",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T14:52:38.529767",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T14:57:08.081990",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T15:22:47.625571",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T15:22:50.276819",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T15:30:23.703020",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T16:33:29.913303",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T16:38:37.009627",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-30T08:15:28.483814",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-30T11:01:30.439228",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-30T11:06:32.238702",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-30T11:11:23.362510",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-09-01T02:49:16.480338",
         "changed": false,
         "image_tag": "my-app:latest"
       }
     ],
     "create_user": [
       {
-        "timestamp": "2025-08-26T06:27:18.220586",
+        "timestamp": "2025-08-27T15:28:33.647021",
         "changed": true,
         "image_tag": "my-app:latest"
       },
       {
-        "timestamp": "2025-08-26T06:34:56.636142",
+        "timestamp": "2025-08-28T09:35:35.351579",
         "changed": false,
         "image_tag": "my-app:latest"
       },
       {
-        "timestamp": "2025-08-26T08:16:33.536767",
+        "timestamp": "2025-08-28T12:02:59.236280",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T12:36:08.110362",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T13:11:56.933479",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T14:16:30.018178",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T14:17:01.198905",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T14:52:38.529767",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T14:57:08.081990",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T15:22:47.625571",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T15:22:50.276819",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T15:30:23.703020",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T16:33:29.913303",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T16:38:37.009627",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-30T08:15:28.483814",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-30T11:01:30.439228",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-30T11:06:32.238702",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-30T11:11:23.362510",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-09-01T02:49:16.480338",
         "changed": false,
         "image_tag": "my-app:latest"
       }
     ],
     "install_rust": [
       {
-        "timestamp": "2025-08-26T06:27:18.220586",
+        "timestamp": "2025-08-27T15:28:33.647021",
         "changed": true,
         "image_tag": "my-app:latest"
       },
       {
-        "timestamp": "2025-08-26T06:34:56.636142",
+        "timestamp": "2025-08-28T09:35:35.351579",
         "changed": false,
         "image_tag": "my-app:latest"
       },
       {
-        "timestamp": "2025-08-26T08:16:33.536767",
+        "timestamp": "2025-08-28T12:02:59.236280",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T12:36:08.110362",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T13:11:56.933479",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T14:16:30.018178",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T14:17:01.198905",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T14:52:38.529767",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T14:57:08.081990",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T15:22:47.625571",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T15:22:50.276819",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T15:30:23.703020",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T16:33:29.913303",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T16:38:37.009627",
+        "changed": true,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-30T08:15:28.483814",
+        "changed": true,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-30T11:01:30.439228",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-30T11:06:32.238702",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-30T11:11:23.362510",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-09-01T02:49:16.480338",
         "changed": false,
         "image_tag": "my-app:latest"
       }
     ],
     "install_cpp_tools": [
       {
-        "timestamp": "2025-08-26T06:27:18.220586",
+        "timestamp": "2025-08-27T15:28:33.647021",
         "changed": true,
         "image_tag": "my-app:latest"
       },
       {
-        "timestamp": "2025-08-26T06:34:56.636142",
+        "timestamp": "2025-08-28T09:35:35.351579",
         "changed": false,
         "image_tag": "my-app:latest"
       },
       {
-        "timestamp": "2025-08-26T08:16:33.536767",
+        "timestamp": "2025-08-28T12:02:59.236280",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T12:36:08.110362",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T13:11:56.933479",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T14:16:30.018178",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T14:17:01.198905",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T14:52:38.529767",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T14:57:08.081990",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T15:22:47.625571",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T15:22:50.276819",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T15:30:23.703020",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T16:33:29.913303",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T16:38:37.009627",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-30T08:15:28.483814",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-30T11:01:30.439228",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-30T11:06:32.238702",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-30T11:11:23.362510",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-09-01T02:49:16.480338",
         "changed": false,
         "image_tag": "my-app:latest"
       }
     ],
     "setup_docker_access": [
       {
-        "timestamp": "2025-08-26T06:27:18.220586",
+        "timestamp": "2025-08-27T15:28:33.647021",
         "changed": true,
         "image_tag": "my-app:latest"
       },
       {
-        "timestamp": "2025-08-26T06:34:56.636142",
+        "timestamp": "2025-08-28T09:35:35.351579",
         "changed": false,
         "image_tag": "my-app:latest"
       },
       {
-        "timestamp": "2025-08-26T08:16:33.536767",
+        "timestamp": "2025-08-28T12:02:59.236280",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T12:36:08.110362",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T13:11:56.933479",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T14:16:30.018178",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T14:17:01.198905",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T14:52:38.529767",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T14:57:08.081990",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T15:22:47.625571",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T15:22:50.276819",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T15:30:23.703020",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T16:33:29.913303",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-28T16:38:37.009627",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-30T08:15:28.483814",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-30T11:01:30.439228",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-30T11:06:32.238702",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-08-30T11:11:23.362510",
+        "changed": false,
+        "image_tag": "my-app:latest"
+      },
+      {
+        "timestamp": "2025-09-01T02:49:16.480338",
         "changed": false,
         "image_tag": "my-app:latest"
       }
     ]
   },
-  "stage_hashes": {
-    "setup_ssh": "cc0761932cae1022",
-    "create_user": "608de571c14d2907",
-    "install_rust": "768953cfb2171c75",
-    "install_cpp_tools": "c43d6c99063bf09c",
-    "setup_docker_access": "106121faf2b23e52"
-  }
+  "stage_hashes": {}
 }

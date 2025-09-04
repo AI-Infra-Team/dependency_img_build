@@ -20,63 +20,71 @@ exclude_env:               # Environment variables to exclude
   - "TEMP_VAR"
   - "SECRET_*"
 
-apt_packages:
-  - openssh-server
-  - sudo
-  - curl
-  - wget
-  - git
-  - vim
-  - nano
-  - htop
-  - build-essential
-  - cmake
-  - pkg-config
-  - libssl-dev
-  - ca-certificates
-  - gnupg
-  - lsb-release
+# Light Setup: Fast configuration changes, file modifications
+light_setup:
+  config_files:
+    - name: setup_ssh_config
+      commands:
+        - mkdir -p /var/run/sshd
+        - echo 'root:root123' | chpasswd
+        - sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
+        - sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
+        - sed -i 's/Port 22/Port 2222/' /etc/ssh/sshd_config
 
-stages:
-  - name: setup_ssh
-    dependencies: []
-    commands:
-      - mkdir -p /var/run/sshd
-      - echo 'root:root123' | chpasswd
-      - sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
-      - sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
-      - sed -i 's/Port 22/Port 2222/' /etc/ssh/sshd_config
+    - name: setup_environment
+      commands:
+        - echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> /home/pa/.bashrc
+        - echo 'cd /opt' >> /home/pa/.bashrc
 
-  - name: create_user
-    dependencies: [setup_ssh]
-    commands:
-      - useradd -m -s /bin/bash pa
-      - echo 'pa:74123' | chpasswd
-      - usermod -aG sudo pa
-      - echo 'pa ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
+# Heavy Setup: Package installations and script-based installations
+heavy_setup:
+  # APT package installations (each package is independent)
+  apt_packages:
+    - openssh-server
+    - sudo
+    - curl
+    - wget
+    - git
+    - vim
+    - nano
+    - htop
+    - build-essential
+    - cmake
+    - pkg-config
+    - libssl-dev
+    - ca-certificates
+    - gnupg
+    # - lsb-release
+    - net-tools
 
-  - name: install_rust
-    dependencies: [create_user]
-    commands:
-      - su - pa -c 'curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y'
-      - su - pa -c 'echo "source ~/.cargo/env" >> ~/.bashrc'
+    # C++ development tools
+    - g++
+    - gdb
+    - valgrind
+    - clang
+    - libboost-all-dev
 
-  - name: install_cpp_tools
-    dependencies: [create_user]
-    commands:
-      - apt-get update && apt-get install -y g++ gdb valgrind clang
-      - apt-get install -y libboost-all-dev
+    # Docker
+    - docker.io
 
-  - name: setup_docker_access
-    dependencies: [create_user]
-    commands:
-      - apt-get update && apt-get install -y docker.io
-      - usermod -aG docker pa
-      - systemctl enable docker || true
+  # Script-based installations (downloading and compiling)
+  script_installs:
+    - name: create_user
+      commands:
+        - useradd -m -s /bin/bash pa || true
+        - echo 'pa:74123' | chpasswd
+        - usermod -aG sudo pa || true
+        - echo 'pa ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
 
-env_scripts:
-  - echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> /home/pa/.bashrc
-  - echo 'cd /opt' >> /home/pa/.bashrc
+    - name: install_rust
+      commands:
+        - curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+        - echo 'source ~/.cargo/env' >> ~/.bashrc
+
+    - name: setup_docker_access
+      commands:
+        - usermod -aG docker pa || true
+        - systemctl enable docker || true
 
 expose_ports:
   - "2222:2222"

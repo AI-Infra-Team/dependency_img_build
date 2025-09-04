@@ -4,6 +4,7 @@ import argparse
 import json
 import sys
 import os
+import logging
 from typing import Dict, Any
 
 from config import CacheConfig
@@ -47,19 +48,36 @@ def load_cache_config(config_path: str = None) -> CacheConfig:
 
 def cmd_build(args):
     """Build command handler"""
+    print(f"🚀 Starting Docker Layer Build System")
+    print(f"   Configuration: {args.config}")
+    print(f"   Force rebuild: {args.force_rebuild}")
+    
+    # Load cache configuration
+    print(f"   Loading cache configuration...")
     cache_config = load_cache_config(args.cache_config)
+    print(f"   Cache config loaded")
+    
+    # Initialize orchestrator
+    print(f"   Initializing build orchestrator...")
     orchestrator = BuildOrchestrator(cache_config)
     
     if not os.path.exists(args.config):
-        print(f"Error: Configuration file '{args.config}' not found")
+        print(f"❌ Error: Configuration file '{args.config}' not found")
         return 1
     
+    # Build the image
+    print(f"\n📦 Building image from {args.config}...")
     success = orchestrator.build_image(
         config_file=args.config,
         force_rebuild=args.force_rebuild
     )
     
-    return 0 if success else 1
+    if success:
+        print(f"\n🎉 Build completed successfully!")
+        return 0
+    else:
+        print(f"\n💥 Build failed!")
+        return 1
 
 
 def cmd_status(args):
@@ -175,6 +193,9 @@ def cmd_init(args):
 
 
 def main():
+    # Configure logging to show INFO level messages
+    logging.basicConfig(level=logging.INFO)
+    
     parser = argparse.ArgumentParser(
         description="Dynamic Docker Build System with Multi-level Caching",
         formatter_class=argparse.RawDescriptionHelpFormatter,

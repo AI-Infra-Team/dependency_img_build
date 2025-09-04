@@ -1,7 +1,7 @@
 import yaml
 import json
 from typing import Dict, Any
-from config import UserDeclaration, Stage
+from config import UserDeclaration, Stage, LightSetupConfig, ScriptInstall, HeavySetup
 
 
 class DeclarationParser:
@@ -22,6 +22,7 @@ class DeclarationParser:
     
     def _parse_dict(self, data: Dict[str, Any]) -> UserDeclaration:
         """Convert dictionary to UserDeclaration object"""
+        # Parse legacy stages format (for backward compatibility)
         stages = []
         if 'stages' in data:
             for stage_data in data['stages']:
@@ -32,13 +33,67 @@ class DeclarationParser:
                 )
                 stages.append(stage)
         
+        # Parse new light_setup format
+        light_setup = None
+        if 'light_setup' in data:
+            light_setup = {}
+            for category, configs in data['light_setup'].items():
+                light_configs = []
+                for config_data in configs:
+                    config = LightSetupConfig(
+                        name=config_data['name'],
+                        dependencies=config_data.get('dependencies', []),
+                        commands=config_data.get('commands', [])
+                    )
+                    light_configs.append(config)
+                light_setup[category] = light_configs
+        
+        # Parse new heavy_setup format
+        heavy_setup = None
+        if 'heavy_setup' in data:
+            heavy_data = data['heavy_setup']
+            script_installs = []
+            if 'script_installs' in heavy_data:
+                for install_data in heavy_data['script_installs']:
+                    install = ScriptInstall(
+                        name=install_data['name'],
+                        dependencies=install_data.get('dependencies', []),
+                        commands=install_data.get('commands', [])
+                    )
+                    script_installs.append(install)
+            
+            heavy_setup = HeavySetup(
+                apt_packages=heavy_data.get('apt_packages', []),
+                yum_packages=heavy_data.get('yum_packages', []),
+                script_installs=script_installs
+            )
+        
         return UserDeclaration(
             user=data.get('user', 'app'),
             sudo=data.get('sudo', False),
+            # Base image
+            base_image=data.get('base_image', 'ubuntu:22.04'),
+            # Legacy fields for backward compatibility
             apt_packages=data.get('apt_packages', []),
             yum_packages=data.get('yum_packages', []),
             env_scripts=data.get('env_scripts', []),
-            stages=stages
+            stages=stages,
+            # New fields
+            layers=data.get('layers', {}),
+            light_setup=light_setup,
+            heavy_setup=heavy_setup,
+            optimization=data.get('optimization', {}),
+            # Metadata
+            image_name=data.get('image_name', 'my-app'),
+            container_name=data.get('container_name', 'my-app-container'),
+            image_tag=data.get('image_tag', 'latest'),
+            # Environment configuration
+            inherit_env=data.get('inherit_env', True),
+            inherit_proxy=data.get('inherit_proxy', True),
+            inherit_locale=data.get('inherit_locale', False),
+            inherit_timezone=data.get('inherit_timezone', True),
+            inherit_custom_env=data.get('inherit_custom_env', []),
+            exclude_env=data.get('exclude_env', [])
         )
     
     def validate_declaration(self, declaration: UserDeclaration) -> bool:

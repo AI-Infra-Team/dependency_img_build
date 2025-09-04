@@ -2,13 +2,19 @@ import subprocess
 import tempfile
 import os
 import shutil
-from typing import List, Optional
-from config import UserDeclaration, CacheConfig, CacheLevel
+import hashlib
+import json
+import concurrent.futures
+from typing import List, Optional, Dict, Tuple
+from datetime import datetime, timedelta
+from pathlib import Path
+from config import UserDeclaration, CacheConfig, CacheLevel, Layer, LayerType
 from parser import DeclarationParser
 from dockerfile_generator import DockerfileGenerator
 from build_tracker import BuildTracker
 from cache_manager import CacheManager
 from env_manager import EnvironmentManager, EnvVarConfig
+from reuse import LayerReuseManager
 
 
 def sudo_prefix() -> List[str]:
@@ -19,12 +25,45 @@ def sudo_prefix() -> List[str]:
 
 
 class BuildOrchestrator:
+    """Orchestrator for Docker builds with layered architecture support"""
+    
     def __init__(self, cache_config: CacheConfig = None):
         self.cache_config = cache_config or CacheConfig()
         self.parser = DeclarationParser()
         self.generator = DockerfileGenerator()
         self.tracker = BuildTracker()
         self.cache_manager = CacheManager(self.cache_config)
+        self.reuse_manager = LayerReuseManager()
+        
+        # Layer cache file (for backward compatibility)
+        self.layer_cache_file = "layers_cache.json"
+        self.layer_cache = self._load_layer_cache()
+        
+        # Work directory for Dockerfiles
+        self.work_dir = None
+    
+    def _load_layer_cache(self) -> Dict:
+        """Load layer cache from file"""
+        if os.path.exists(self.layer_cache_file):
+            try:
+                with open(self.layer_cache_file, 'r') as f:
+                    return json.load(f)
+            except:
+                pass
+        return {
+            "layers": {},
+            "layer_chains": {},
+            "metadata": {
+                "created": datetime.now().isoformat(),
+                "version": "1.0"
+            }
+        }
+    
+    def _save_layer_cache(self):
+        """Save layer cache to file"""
+        self.layer_cache["metadata"]["last_updated"] = datetime.now().isoformat()
+        with open(self.layer_cache_file, 'w') as f:
+            json.dump(self.layer_cache, f, indent=2)
     
     def build_image(self, config_file: str, force_rebuild: bool = False) -> bool:
         """Build Docker image from configuration file"""
@@ -34,10 +73,220 @@ class BuildOrchestrator:
             if not self.parser.validate_declaration(declaration):
                 raise ValueError("Invalid configuration")
             
-            # Get image tag from configuration
-            image_tag = f"{declaration.image_name}:{declaration.image_tag}"
+            # Always use layered build
+            return self._build_layered(declaration, force_rebuild)
+                
+        except Exception as e:
+            print(f"Build failed: {str(e)}")
+            return False
+    
+    def _build_layered(self, declaration: UserDeclaration, force_rebuild: bool = False) -> bool:
+        """Build using layered architecture with optimal reuse strategy"""
+        print("🔄 Using layered build mode")
+        
+        # Create work directory
+        self.work_dir = tempfile.mkdtemp(prefix="docker_layer_")
+        
+        try:
+            # Parse all layers from configuration
+            print(f"📋 Parsing layers from configuration...")
+            all_layers = self._parse_layers(declaration)
+            print(f"   Found {len(all_layers)} total layers")
             
-            # Record stage changes before getting order
+            # Get environment variables
+            print(f"🌍 Processing environment variables...")
+            env_vars = self._get_env_vars(declaration)
+            print(f"   Found {len(env_vars)} environment variables")
+            
+            if force_rebuild:
+                print("🔥 Force rebuild requested - ignoring cache")
+                parent_image = declaration.base_image
+                layers_to_build = [l for l in all_layers if l.type != LayerType.BASE]
+                reused_layer_names = set()
+                print(f"   Will build all {len(layers_to_build)} layers from scratch")
+            else:
+                # Use the reuse manager to find optimal strategy!
+                print(f"🔍 Finding optimal reuse strategy...")
+                base_image, reused_layer_names, layers_to_build, cleanup_commands = self.reuse_manager.find_optimal_base(
+                    all_layers,
+                    preferred_repo=declaration.image_name
+                )
+                parent_image = base_image
+                
+                print(f"📊 Reusing {len(reused_layer_names)} layers, building {len(layers_to_build)}")
+                packages_reused = len([name for name in reused_layer_names if any(l.name == name and l.type == LayerType.APT for l in all_layers)])
+                scripts_reused = len([name for name in reused_layer_names if any(l.name == name and l.type == LayerType.SCRIPT for l in all_layers)])
+                print(f"   Packages reused: {packages_reused}, Scripts reused: {scripts_reused}")
+                print(f"   Base image: {parent_image}")
+                
+                # Sanity-check: verify reused APT packages actually exist in base
+                try:
+                    required_apt_layers = [l for l in all_layers if l.type == LayerType.APT]
+                    missing_pkgs = []
+                    for l in required_apt_layers:
+                        if l.name in reused_layer_names:
+                            if not self._base_has_package(parent_image, l.content):
+                                missing_pkgs.append(l)
+                    if missing_pkgs:
+                        print(f"   ⚠️  Base image missing {len(missing_pkgs)} expected packages; will build them explicitly")
+                        for miss in missing_pkgs:
+                            if miss.name in reused_layer_names:
+                                reused_layer_names.remove(miss.name)
+                            # Ensure we build the missing package layer
+                            if all(miss.name != l.name for l in layers_to_build):
+                                layers_to_build.insert(0, miss)
+                except Exception as e:
+                    print(f"   ⚠️  Package presence check failed: {e}")
+                
+                # If the optimal base contains extra APT packages, schedule a cleanup layer
+                cleanup_layers: List[Layer] = []
+                if cleanup_commands:
+                    print(f"   ⚠️  {len(cleanup_commands)} cleanup operations available for extra dependencies")
+                    apt_removes = []
+                    for cleanup in cleanup_commands:
+                        if cleanup['type'] == 'apt_remove':
+                            apt_list = cleanup.get('packages', [])
+                            apt_removes.extend(apt_list)
+                            print(f"      - {cleanup['description']}: {', '.join(apt_list[:3])}{'...' if len(apt_list) > 3 else ''}")
+                        elif cleanup['type'] == 'script_remove':
+                            print(f"      - {cleanup['description']}: {', '.join(cleanup.get('scripts', [])[:3])}{'...' if len(cleanup.get('scripts', [])) > 3 else ''}")
+                    # Create an apt cleanup layer if needed
+                    if apt_removes:
+                        cleanup_cmd = (
+                            "DEBIAN_FRONTEND=noninteractive apt-get purge -y " + ' '.join(sorted(set(apt_removes))) +
+                            " || true && DEBIAN_FRONTEND=noninteractive apt-get autoremove -y || true"
+                        )
+                        cleanup_layers.append(Layer(
+                            name="apt_cleanup_remove",
+                            type=LayerType.SCRIPT,
+                            content=cleanup_cmd
+                        ))
+                        # Prepend cleanup layer so extra packages are removed before proceeding
+                        layers_to_build = cleanup_layers + layers_to_build
+            
+            # Build the required layers
+            built_count = 0
+            print(f"\n🚧 Starting build process...")
+            
+            # Track only layers we actually build in this run
+            built_layers: List[Layer] = []
+            
+            # Log reused layers (do not add to cache lists unless built)
+            print(f"📦 Processing reused layers...")
+            reused_count = 0
+            for layer in all_layers:
+                if layer.type == LayerType.BASE:
+                    continue
+                if layer.name in reused_layer_names:
+                    reused_count += 1
+                    print(f"   ✅ Reusing layer: {layer.name}")
+            print(f"   Total reused layers: {reused_count}")
+            
+            # If we need to build APT packages, run apt-get update first
+            has_apt_to_build = any(l.type == LayerType.APT for l in layers_to_build)
+            if has_apt_to_build and parent_image != declaration.base_image:
+                print(f"🔄 Need to refresh apt cache for continuing build...")
+                # We're continuing from an existing image, need fresh apt cache
+                apt_update_layer = Layer(
+                    name="apt_refresh",
+                    type=LayerType.SCRIPT,
+                    content="apt-get update"
+                )
+                image_tag = self._build_layer(apt_update_layer, parent_image, env_vars, declaration.image_name)
+                parent_image = image_tag
+                print(f"✓ Refreshed apt cache")
+            
+            print(f"\n🔨 Building {len(layers_to_build)} new layers...")
+            
+            # Build all the layers we need
+            for i, layer in enumerate(layers_to_build):
+                print(f"\n📦 Building layer {i+1}/{len(layers_to_build)}: {layer.name}")
+                
+                # For the first APT package when building from scratch, add apt-get update
+                if layer.type == LayerType.APT and parent_image == declaration.base_image and built_count == 0:
+                    print(f"   Adding apt-get update before first APT package...")
+                    apt_update_layer = Layer(
+                        name="apt_update",
+                        type=LayerType.SCRIPT,
+                        content="apt-get update"
+                    )
+                    image_tag = self._build_layer(apt_update_layer, parent_image, env_vars, declaration.image_name)
+                    parent_image = image_tag
+                    print(f"✓ Updated apt cache")
+                
+                # Build the layer
+                print(f"   Building layer {layer.name}...")
+                image_tag = self._build_layer(layer, parent_image, env_vars, declaration.image_name)
+                
+                # Cache the layer
+                print(f"   Caching layer {layer.name}...")
+                self.reuse_manager.cache_layer(layer, image_tag)
+                
+                # Track layers actually built in this run
+                built_layers.append(layer)
+                
+                # Cache this intermediate state with layers actually built in this run
+                print(f"   Caching intermediate state with {len(built_layers)} built layers...")
+                self.reuse_manager.cache_built_image(image_tag, built_layers.copy())
+                
+                parent_image = image_tag
+                built_count += 1
+                print(f"✓ Built layer {layer.name}: {image_tag}")
+                print(f"   Progress: {built_count}/{len(layers_to_build)} layers completed")
+            
+            # Tag final image
+            print(f"\n🏷️  Tagging final image...")
+            final_image = parent_image
+            if final_image:
+                target_tag = f"{declaration.image_name}:{declaration.image_tag}"
+                print(f"   Final image: {final_image}")
+                print(f"   Target tag: {target_tag}")
+                
+                if final_image != target_tag:
+                    print(f"   Tagging {final_image} as {target_tag}")
+                    self._tag_image(final_image, target_tag)
+                else:
+                    print(f"   Image already has target tag")
+                
+                # Cache only the layers actually built in this run to avoid misattribution
+                print(f"   Caching complete image with {len(built_layers)} built layers...")
+                self.reuse_manager.cache_built_image(target_tag, built_layers)
+                
+                print(f"\n✅ Successfully built {target_tag}")
+                print(f"📊 Build stats: {built_count} built, {len(reused_layer_names) if not force_rebuild else 0} reused")
+                
+                return True
+            
+            return False
+            
+        finally:
+            # Cleanup work directory
+            print(f"🧹 Cleaning up work directory...")
+            if self.work_dir and os.path.exists(self.work_dir):
+                print(f"   Removing: {self.work_dir}")
+                shutil.rmtree(self.work_dir)
+                print(f"   ✅ Work directory cleaned up")
+            else:
+                print(f"   No work directory to clean up")
+
+    def _base_has_package(self, image: str, package: str) -> bool:
+        """Check if a Debian package appears installed in the given image."""
+        try:
+            cmd = sudo_prefix() + ['docker', 'run', '--rm', image, 'bash', '-lc', f'dpkg -s {package} >/dev/null 2>&1']
+            result = subprocess.run(cmd, capture_output=True)
+            return result.returncode == 0
+        except Exception:
+            return False
+    
+    def _build_traditional_deprecated(self, declaration: UserDeclaration, force_rebuild: bool = False) -> bool:
+        """DEPRECATED: Build using traditional single Dockerfile approach"""
+        print("📦 Using traditional build mode")
+        
+        # Get image tag from configuration
+        image_tag = f"{declaration.image_name}:{declaration.image_tag}"
+        
+        # Record stage changes if using stages
+        if declaration.stages:
             changed_stages = self.tracker.record_stage_changes(declaration.stages, image_tag)
             changed_stage_names = [name for name, changed in changed_stages.items() if changed]
             
@@ -46,58 +295,287 @@ class BuildOrchestrator:
             else:
                 print("✅ No stage changes detected")
             
-            # Get optimized stage order with dynamic reordering
+            # Get optimized stage order
             stage_order = self.parser.get_stage_order(declaration, self.tracker)
             
-            # Apply additional optimization based on change detection
+            # Apply optimization
             original_order = stage_order.copy()
             stage_order = self.tracker.get_optimized_stage_order(declaration.stages, stage_order)
             
             if original_order != stage_order:
                 print(f"🔀 Stage order optimized: {' → '.join(stage_order)}")
-            else:
-                print(f"📋 Stage order: {' → '.join(stage_order)}")
+        else:
+            stage_order = []
+        
+        # Generate build steps
+        build_steps = self.generator.generate_build_steps(declaration, stage_order)
+        
+        print(f"🔧 Generated {len(build_steps)} build steps")
+        
+        # Show inherited environment variables
+        self._show_inherited_env_summary(declaration)
+        
+        # Analyze what needs to be rebuilt
+        if not force_rebuild:
+            rebuild_plan = self.tracker.get_rebuild_plan(build_steps)
+            print(f"📈 Build plan: {rebuild_plan['keep_steps']} cached, "
+                  f"{rebuild_plan['rebuild_steps']} rebuild "
+                  f"({rebuild_plan['efficiency']:.1%} efficiency)")
             
-            # Generate build steps
-            build_steps = self.generator.generate_build_steps(declaration, stage_order)
-            
-            print(f"🔧 Generated {len(build_steps)} build steps")
-            
-            # Show inherited environment variables
-            self._show_inherited_env_summary(declaration)
-            
-            # Analyze what needs to be rebuilt
-            if not force_rebuild:
-                rebuild_plan = self.tracker.get_rebuild_plan(build_steps)
-                print(f"📈 Build plan: {rebuild_plan['keep_steps']} cached, "
-                      f"{rebuild_plan['rebuild_steps']} rebuild "
-                      f"({rebuild_plan['efficiency']:.1%} efficiency)")
-                
-                if rebuild_plan['keep_steps'] > 0:
-                    print(f"⚡ Cache will accelerate {rebuild_plan['keep_steps']} steps")
-            else:
-                rebuild_plan = {"actions": ['rebuild'] * len(build_steps)}
-                print("🔥 Force rebuild requested - ignoring all cache")
-            
-            # Execute build
-            success = self._execute_build(
-                declaration, stage_order, build_steps, 
-                rebuild_plan["actions"], image_tag
+            rebuild_from_step = rebuild_plan.get('first_changed_step', 0) or 0
+        else:
+            rebuild_plan = {"actions": ['rebuild'] * len(build_steps)}
+            rebuild_from_step = 0
+            print("🔥 Force rebuild requested - ignoring all cache")
+        
+        # Execute build
+        success = self._execute_build(
+            declaration, stage_order, build_steps, 
+            rebuild_plan["actions"], image_tag, rebuild_from_step
+        )
+        
+        if success:
+            self.tracker.record_build(build_steps, image_tag)
+            print(f"Successfully built image: {image_tag}")
+        
+        return success
+    
+    def _parse_layers(self, declaration: UserDeclaration) -> List[Layer]:
+        """Parse layers from declaration"""
+        layers = []
+        
+        # Create base layer
+        base_layer = Layer(
+            name="base",
+            type=LayerType.BASE,
+            content=declaration.base_image
+        )
+        layers.append(base_layer)
+        
+        # Check if we need apt packages
+        has_apt_packages = False
+        if hasattr(declaration, 'heavy_setup') and declaration.heavy_setup and declaration.heavy_setup.apt_packages:
+            has_apt_packages = True
+        elif declaration.apt_packages:
+            has_apt_packages = True
+        
+        # Add apt-update layer if we have apt packages to install
+        if has_apt_packages:
+            apt_update_layer = Layer(
+                name="apt_update",
+                type=LayerType.SCRIPT,
+                content="apt-get update"
             )
+            layers.append(apt_update_layer)
+        
+        # Parse from heavy_setup first (current structure)
+        if hasattr(declaration, 'heavy_setup') and declaration.heavy_setup:
+            # Parse APT packages from heavy_setup
+            if declaration.heavy_setup.apt_packages:
+                for package in declaration.heavy_setup.apt_packages:
+                    # Replace special characters in package names for layer naming
+                    safe_name = package.replace('-', '_').replace('+', 'plus').replace('.', '_')
+                    layer = Layer(
+                        name=safe_name,
+                        type=LayerType.APT,
+                        content=package
+                    )
+                    layers.append(layer)
             
-            if success:
-                self.tracker.record_build(build_steps, image_tag)
-                print(f"Successfully built image: {image_tag}")
-                print(f"Final stage order: {' -> '.join(stage_order)}")
+            # Parse script installs from heavy_setup
+            if declaration.heavy_setup.script_installs:
+                for script in declaration.heavy_setup.script_installs:
+                    layer = Layer(
+                        name=script.name,
+                        type=LayerType.SCRIPT,
+                        content='\n'.join(script.commands)
+                    )
+                    layers.append(layer)
+        
+        # Parse from light_setup (config files and quick setups)
+        if hasattr(declaration, 'light_setup') and declaration.light_setup:
+            for category, configs in declaration.light_setup.items():
+                for config in configs:
+                    layer = Layer(
+                        name=config.name,
+                        type=LayerType.CONFIG,
+                        content='\n'.join(config.commands)
+                    )
+                    layers.append(layer)
+        
+        # Parse from 'layers' field if exists (future format)
+        if hasattr(declaration, 'layers') and declaration.layers:
+            # Parse APT packages
+            if 'apt' in declaration.layers:
+                for package in declaration.layers['apt']:
+                    # Replace special characters in package names for layer naming
+                    safe_name = package.replace('-', '_').replace('+', 'plus').replace('.', '_')
+                    layer = Layer(
+                        name=safe_name,
+                        type=LayerType.APT,
+                        content=package
+                    )
+                    layers.append(layer)
             
-            return success
+            # Parse scripts
+            if 'scripts' in declaration.layers:
+                for script in declaration.layers['scripts']:
+                    layer = Layer(
+                        name=script['name'],
+                        type=LayerType.SCRIPT,
+                        content='\n'.join(script.get('commands', []))
+                    )
+                    layers.append(layer)
+        
+        # Legacy support: parse apt_packages
+        elif declaration.apt_packages:
+            for package in declaration.apt_packages:
+                # Replace special characters in package names for layer naming
+                safe_name = package.replace('-', '_').replace('+', 'plus').replace('.', '_')
+                layer = Layer(
+                    name=safe_name,
+                    type=LayerType.APT,
+                    content=package
+                )
+                layers.append(layer)
+        
+        return layers
+    
+    def _build_layer(self, layer: Layer, parent_image: str, env_vars: Dict[str, str], image_name: str) -> str:
+        """Build a single layer"""
+        print(f"🔨 Starting build for layer: {layer.name} (type: {layer.type.value})")
+        print(f"   Parent image: {parent_image}")
+        
+        # Generate Dockerfile
+        print(f"   Generating Dockerfile...")
+        dockerfile_path = self._generate_layer_dockerfile(layer, parent_image, env_vars)
+        print(f"   Dockerfile generated: {dockerfile_path}")
+        
+        # Build image
+        image_tag = layer.get_image_tag(image_name)
+        print(f"   Target image: {image_tag}")
+        
+        cmd = sudo_prefix() + [
+            'docker', 'build',
+            '-f', dockerfile_path,
+            '-t', image_tag,
+            self.work_dir
+        ]
+        
+        # For APT packages, add retry logic
+        max_retries = 3 if layer.type == LayerType.APT else 1
+        
+        for attempt in range(max_retries):
+            if max_retries > 1:
+                print(f"   Attempt {attempt + 1}/{max_retries}...")
             
-        except Exception as e:
-            print(f"Build failed: {str(e)}")
-            return False
+            print(f"   Running command: {' '.join(cmd)}")
+            print(f"   Starting Docker build (real-time output)...")
+            
+            # Run without capturing output so it shows in real time
+            result = subprocess.run(cmd, cwd=self.work_dir)
+            
+            if result.returncode == 0:
+                print(f"✅ Successfully built layer {layer.name}")
+                return image_tag
+            else:
+                if attempt < max_retries - 1:
+                    print(f"⚠️  Build attempt {attempt + 1} failed for layer {layer.name}, retrying...")
+                    # Add a small delay before retry
+                    import time
+                    time.sleep(2)
+                else:
+                    print(f"❌ Failed to build layer {layer.name} after {max_retries} attempts")
+                    raise RuntimeError(f"Layer build failed: {layer.name}")
+        
+        return image_tag
+    
+    def _generate_layer_dockerfile(self, layer: Layer, parent_image: str, env_vars: Dict[str, str]) -> str:
+        """Generate Dockerfile for a layer"""
+        dockerfile_name = f"Dockerfile.{layer.type.value}-{layer.name}"
+        dockerfile_path = os.path.join(self.work_dir, dockerfile_name)
+        
+        print(f"   📝 Generating Dockerfile: {dockerfile_name}")
+        
+        lines = [f"FROM {parent_image}"]
+        
+        # Add environment variables
+        if env_vars:
+            print(f"      Adding {len(env_vars)} environment variables")
+            for key, value in env_vars.items():
+                lines.append(f"ENV {key}=\"{value}\"")
+        
+        # Generate RUN command based on layer type
+        if layer.type == LayerType.APT:
+            print(f"      APT package: {layer.content}")
+            # Add retry logic for APT commands to handle network issues
+            apt_cmd = f"DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends {layer.content}"
+            retry_cmd = f"RUN for i in {{1..3}}; do {apt_cmd} && break || (echo \"APT install attempt $i failed, retrying in 5 seconds...\" && sleep 5); done"
+            lines.append(retry_cmd)
+        elif layer.type == LayerType.SCRIPT:
+            print(f"      Script commands: {len(layer.content.split(chr(10)))} lines")
+            commands = layer.content.split('\n')
+            if len(commands) == 1:
+                lines.append(f"RUN {commands[0]}")
+            else:
+                lines.append(f"RUN {' && '.join(commands)}")
+        elif layer.type == LayerType.CONFIG:
+            print(f"      Config commands: {len(layer.content.split(chr(10)))} lines")
+            commands = layer.content.split('\n')
+            if len(commands) == 1:
+                lines.append(f"RUN {commands[0]}")
+            else:
+                lines.append(f"RUN {' && '.join(commands)}")
+        
+        # Add metadata
+        lines.append(f"LABEL layer.name=\"{layer.name}\"")
+        lines.append(f"LABEL layer.type=\"{layer.type.value}\"")
+        lines.append(f"LABEL layer.hash=\"{layer.hash}\"")
+        
+        print(f"      Writing {len(lines)} lines to Dockerfile")
+        with open(dockerfile_path, 'w') as f:
+            f.write('\n'.join(lines))
+        
+        print(f"      📄 Dockerfile ready: {dockerfile_path}")
+        return dockerfile_path
+    
+    def _image_exists(self, image_tag: str) -> bool:
+        """Check if Docker image exists"""
+        cmd = ['docker', 'images', '-q', image_tag]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        return bool(result.stdout.strip())
+    
+    def _tag_image(self, source: str, target: str):
+        """Tag a Docker image"""
+        print(f"🏷️  Tagging image: {source} -> {target}")
+        cmd = sudo_prefix() + ['docker', 'tag', source, target]
+        print(f"   Running: {' '.join(cmd)}")
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"❌ Failed to tag image:")
+            if result.stderr.strip():
+                print(f"STDERR: {result.stderr}")
+            raise RuntimeError(f"Failed to tag {source} as {target}")
+        print(f"✅ Successfully tagged image")
+    
+    def _get_env_vars(self, declaration: UserDeclaration) -> Dict[str, str]:
+        """Get environment variables from declaration"""
+        if not declaration.inherit_env:
+            return {}
+        
+        env_config = EnvVarConfig(
+            inherit_proxy=declaration.inherit_proxy,
+            inherit_locale=declaration.inherit_locale,
+            inherit_timezone=declaration.inherit_timezone,
+            inherit_custom=declaration.inherit_custom_env,
+            exclude_vars=declaration.exclude_env
+        )
+        
+        env_manager = EnvironmentManager(env_config)
+        return env_manager.extract_system_env_vars()
     
     def _parse_config(self, config_file: str) -> UserDeclaration:
-        """Parse configuration file based on extension"""
+        """Parse configuration file"""
         if config_file.endswith('.yaml') or config_file.endswith('.yml'):
             return self.parser.parse_yaml(config_file)
         elif config_file.endswith('.json'):
@@ -105,267 +583,112 @@ class BuildOrchestrator:
         else:
             raise ValueError(f"Unsupported config file format: {config_file}")
     
-    def _execute_build(self, declaration: UserDeclaration, stage_order: List[str],
-                      build_steps: List, actions: List[str], image_tag: str) -> bool:
-        """Execute the actual Docker build process"""
+    def _show_inherited_env_summary(self, declaration: UserDeclaration):
+        """Show summary of inherited environment variables"""
+        if not declaration.inherit_env:
+            return
         
-        # Generate Dockerfile
-        dockerfile_content = self.generator.generate(declaration, stage_order)
+        env_vars = self._get_env_vars(declaration)
+        if env_vars:
+            print(f"🌍 Inheriting {len(env_vars)} environment variables")
+            if declaration.inherit_proxy:
+                proxy_vars = [k for k in env_vars.keys() if 'proxy' in k.lower()]
+                if proxy_vars:
+                    print(f"   Including proxy: {', '.join(proxy_vars)}")
+    
+    def _execute_build(self, declaration: UserDeclaration, stage_order: List[str], 
+                      build_steps: List, actions: List[str], image_tag: str, 
+                      rebuild_from_step: int) -> bool:
+        """Execute the Docker build"""
+        # Generate Dockerfile with dynamic env injection
+        dockerfile = self.generator.generate(declaration, stage_order, rebuild_from_step)
         
-        print(f"\n📝 Generated Dockerfile with {len(stage_order)} stages:")
-        for i, stage_name in enumerate(stage_order, 1):
-            print(f"  {i}. {stage_name}")
+        # Write Dockerfile to temp file
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.Dockerfile', delete=False) as f:
+            f.write(dockerfile)
+            dockerfile_path = f.name
         
-        # Create build context
-        with tempfile.TemporaryDirectory() as build_dir:
-            dockerfile_path = os.path.join(build_dir, 'Dockerfile')
-            with open(dockerfile_path, 'w') as f:
-                f.write(dockerfile_content)
-            
-            print(f"📂 Build context created: {build_dir}")
-            
-            # Check for cached layers and modify build accordingly
-            optimized_dockerfile = self._apply_cache_optimization(
-                dockerfile_content, build_steps, actions
-            )
-            
-            if optimized_dockerfile != dockerfile_content:
-                with open(dockerfile_path, 'w') as f:
-                    f.write(optimized_dockerfile)
-                print("⚡ Applied cache optimizations to Dockerfile")
-            
+        try:
             # Execute Docker build
-            build_command = sudo_prefix() + [
+            cmd = sudo_prefix() + [
                 'docker', 'build',
-                '-t', image_tag,
                 '-f', dockerfile_path,
-                build_dir
+                '-t', image_tag,
+                '.'
             ]
             
-            # Add build args for environment variables  
-            env_build_args = self._get_env_build_args(declaration)
-            build_command.extend(env_build_args)
+            print(f"🐋 Building image: {image_tag}")
+            result = subprocess.run(cmd, capture_output=True, text=True)
             
-            try:
-                # Set environment to use legacy Docker builder
-                env = os.environ.copy()
-                env['DOCKER_BUILDKIT'] = '0'
-                
-                print(f"\n🚀 Starting Docker build...")
-                print(f"📦 Image: {image_tag}")
-                print(f"📋 Build command: {' '.join(build_command)}")
-                print("-" * 60)
-                
-                # Stream output in real-time without capturing
-                process = subprocess.Popen(
-                    build_command,
-                    env=env,
-                    cwd=build_dir,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    universal_newlines=True,
-                    bufsize=1
-                )
-                
-                # Stream output line by line
-                step_count = 0
-                total_steps = len([line for line in dockerfile_content.split('\n') if line.strip() and not line.strip().startswith('#')])
-                
-                try:
-                    while True:
-                        output = process.stdout.readline()
-                        if output == '' and process.poll() is not None:
-                            break
-                        if output:
-                            line = output.strip()
-                            print(line)
-                            
-                            # Track progress for RUN steps
-                            if line.startswith('Step ') and '/' in line:
-                                try:
-                                    parts = line.split(' ')
-                                    if len(parts) > 1 and '/' in parts[1]:
-                                        current = int(parts[1].split('/')[0])
-                                        total = int(parts[1].split('/')[1])
-                                        progress = (current / total) * 100
-                                        print(f"📊 Progress: {current}/{total} ({progress:.1f}%)")
-                                except (ValueError, IndexError):
-                                    pass
-                            
-                            # Highlight important steps
-                            if 'Successfully built' in line:
-                                print(f"🎉 Build completed!")
-                            elif 'Successfully tagged' in line:
-                                print(f"🏷️  Image tagged successfully")
-                            elif 'ERROR' in line or 'Error' in line:
-                                print(f"❌ Build error detected")
-                            elif '---> Running in' in line:
-                                print(f"🔄 Executing...")
-                            elif 'Removing intermediate container' in line:
-                                print(f"🧹 Cleanup...")
-                
-                except KeyboardInterrupt:
-                    print(f"\n⏹️  Build interrupted by user")
-                    print("🔄 Terminating Docker process...")
-                    process.terminate()
-                    process.wait()
-                    return False
-                
-                # Wait for process to complete and get return code
-                return_code = process.poll()
-                
-                if return_code == 0:
-                    print("-" * 60)
-                    print("✅ Docker build completed successfully")
-                    
-                    # Update cache information for steps
-                    self._update_step_cache_info(build_steps, actions)
-                    return True
-                else:
-                    print("-" * 60)
-                    print(f"❌ Docker build failed with exit code: {return_code}")
-                    print("💡 Check the output above for error details")
-                    return False
-                    
-            except KeyboardInterrupt:
-                print(f"\n⏹️  Build interrupted by user")
+            if result.returncode == 0:
+                print(f"✅ Successfully built: {image_tag}")
+                return True
+            else:
+                print(f"❌ Build failed:\n{result.stderr}")
                 return False
-            except Exception as e:
-                print(f"💥 Failed to execute Docker build: {str(e)}")
-                return False
-    
-    def _apply_cache_optimization(self, dockerfile_content: str, 
-                                 build_steps: List, actions: List[str]) -> str:
-        """Apply cache optimization to Dockerfile based on cached steps"""
-        lines = dockerfile_content.split('\n')
-        optimized_lines = []
-        
-        # Add cache-related comments and modifications
-        for i, line in enumerate(lines):
-            optimized_lines.append(line)
-            
-            # Add cache layer information as comments
-            if line.startswith('RUN ') and i < len(actions):
-                if actions[i] == 'keep':
-                    optimized_lines.insert(-1, f"# CACHE: This step should be cached")
-                elif actions[i] == 'rebuild':
-                    optimized_lines.insert(-1, f"# REBUILD: This step needs rebuilding")
-        
-        return '\n'.join(optimized_lines)
-    
-    def _update_step_cache_info(self, build_steps: List, actions: List[str]):
-        """Update cache information for build steps"""
-        for i, (step, action) in enumerate(zip(build_steps, actions)):
-            if action == 'keep':
-                # Step was cached, mark as such
-                step.cached = True
-                step.cache_level = CacheLevel.LOCAL
                 
-                # Try to promote to higher cache levels
-                if self.cache_manager.minio_cache:
-                    if not self.cache_manager.exists(step.hash, CacheLevel.MINIO):
-                        # Could promote to Minio if we had the layer data
-                        pass
-                
-                if self.cache_manager.ghcr_cache:
-                    if not self.cache_manager.exists(step.hash, CacheLevel.GHCR):
-                        # Could promote to GHCR if we had the layer data
-                        pass
+        finally:
+            os.unlink(dockerfile_path)
     
-    def clean_cache(self, max_age_days: int = 30) -> bool:
-        """Clean old cache entries"""
-        try:
-            self.tracker.cleanup_old_builds(keep_last=10)
-            print(f"Cache cleanup completed")
-            return True
-        except Exception as e:
-            print(f"Cache cleanup failed: {str(e)}")
-            return False
-    
-    def show_build_status(self, config_file: str = None) -> dict:
-        """Show current build status and cache information"""
+    def show_build_status(self, config_file: Optional[str] = None) -> Dict:
+        """Show build status and cache information"""
         status = {
             "cache_stats": {
                 "total_cached_steps": len(self.tracker.get_cached_steps()),
-                "recent_builds": len(self.tracker.build_history.get("builds", [])),
+                "recent_builds": len(self.tracker.build_history.get("builds", []))
             },
             "cache_levels": {
-                "local": self.cache_manager.local_cache is not None,
-                "minio": self.cache_manager.minio_cache is not None,
-                "ghcr": self.cache_manager.ghcr_cache is not None,
+                "local": True,
+                "minio": bool(self.cache_config.minio_endpoint),
+                "ghcr": bool(self.cache_config.ghcr_registry)
             }
         }
         
-        # Add stage change frequency information
-        stage_frequency = self.tracker.get_stage_change_frequency()
-        if stage_frequency:
-            status["stage_change_frequency"] = stage_frequency
-        
-        if config_file:
-            try:
-                declaration = self._parse_config(config_file)
-                
-                # Detect current stage changes
-                changed_stages = self.tracker.detect_stage_changes(declaration.stages)
-                status["stage_changes"] = changed_stages
-                
-                # Get optimized order
-                stage_order = self.parser.get_stage_order(declaration, self.tracker)
-                optimized_order = self.tracker.get_optimized_stage_order(declaration.stages, stage_order)
-                
-                status["stage_order"] = {
-                    "original": stage_order,
-                    "optimized": optimized_order,
-                    "reordered_count": len([s for s in optimized_order if s not in stage_order[:len(stage_order)//2]])
-                }
-                
-                build_steps = self.generator.generate_build_steps(declaration, optimized_order)
-                rebuild_plan = self.tracker.get_rebuild_plan(build_steps)
-                
-                status["current_config"] = {
-                    "total_steps": rebuild_plan["total_steps"],
-                    "cached_steps": rebuild_plan["keep_steps"],
-                    "rebuild_steps": rebuild_plan["rebuild_steps"],
-                    "efficiency": f"{rebuild_plan['efficiency']:.1%}"
-                }
-            except Exception as e:
-                status["current_config"] = {"error": str(e)}
+        # Add layer cache stats if in layered mode
+        if self.layer_cache:
+            layer_stats = {
+                "total_layers": len(self.layer_cache.get("layers", {})),
+                "total_chains": len(self.layer_cache.get("layer_chains", {}))
+            }
+            status["layer_cache"] = layer_stats
         
         return status
     
-    def _show_inherited_env_summary(self, declaration: UserDeclaration):
-        """Show summary of inherited environment variables"""
-        if not getattr(declaration, 'inherit_env', True):
-            print("🔒 Environment variable inheritance disabled")
-            return
+    def clean_cache(self, max_age_days: int = 30) -> bool:
+        """Clean old cache entries"""
+        print(f"🧹 Cleaning cache entries older than {max_age_days} days...")
         
-        # Create environment manager configuration
-        env_config = EnvVarConfig(
-            inherit_proxy=getattr(declaration, 'inherit_proxy', True),
-            inherit_locale=getattr(declaration, 'inherit_locale', False),
-            inherit_timezone=getattr(declaration, 'inherit_timezone', True),
-            inherit_custom=getattr(declaration, 'inherit_custom_env', []),
-            exclude_vars=getattr(declaration, 'exclude_env', [])
-        )
+        # Clean build tracker cache
+        self.tracker.clean_old_entries(max_age_days)
         
-        env_manager = EnvironmentManager(env_config)
-        inherited_vars = env_manager.extract_system_env_vars()
-        env_manager.print_inherited_vars_summary(inherited_vars)
+        # Clean layer cache if exists
+        if self.layer_cache:
+            self._clean_layer_cache(max_age_days)
+        
+        print("✅ Cache cleaned")
+        return True
     
-    def _get_env_build_args(self, declaration: UserDeclaration) -> List[str]:
-        """Get Docker build arguments for environment variables"""
-        if not getattr(declaration, 'inherit_env', True):
-            return []
+    def _clean_layer_cache(self, max_age_days: int):
+        """Clean old layer cache entries"""
+        cutoff = datetime.now() - timedelta(days=max_age_days)
         
-        # Create environment manager configuration
-        env_config = EnvVarConfig(
-            inherit_proxy=getattr(declaration, 'inherit_proxy', True),
-            inherit_locale=getattr(declaration, 'inherit_locale', False),
-            inherit_timezone=getattr(declaration, 'inherit_timezone', True),
-            inherit_custom=getattr(declaration, 'inherit_custom_env', []),
-            exclude_vars=getattr(declaration, 'exclude_env', [])
-        )
+        # Find layers to remove
+        to_remove = []
+        for key, layer in self.layer_cache.get("layers", {}).items():
+            created = datetime.fromisoformat(layer["created"])
+            if created < cutoff:
+                to_remove.append(key)
         
-        env_manager = EnvironmentManager(env_config)
-        inherited_vars = env_manager.extract_system_env_vars()
-        return env_manager.get_docker_build_args(inherited_vars)
+        # Remove old layers
+        for key in to_remove:
+            layer = self.layer_cache["layers"][key]
+            # Try to remove Docker image
+            if self._image_exists(layer["image"]):
+                cmd = sudo_prefix() + ['docker', 'rmi', layer["image"]]
+                subprocess.run(cmd, capture_output=True)
+            
+            del self.layer_cache["layers"][key]
+        
+        if to_remove:
+            self._save_layer_cache()
+            print(f"  Removed {len(to_remove)} old layers")
