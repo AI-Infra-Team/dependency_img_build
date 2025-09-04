@@ -65,6 +65,7 @@ class DeclarationParser:
             heavy_setup = HeavySetup(
                 apt_packages=heavy_data.get('apt_packages', []),
                 yum_packages=heavy_data.get('yum_packages', []),
+                pip_packages=heavy_data.get('pip_packages', []),
                 script_installs=script_installs
             )
         

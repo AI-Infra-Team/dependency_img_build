@@ -466,7 +466,7 @@
       "type": "config",
       "hash": "af4afa37",
       "image": "ubuntu22-dev:layer-config-setup_ssh_config-af4afa37",
-      "created": "2025-09-04T12:02:28.137981",
+      "created": "2025-09-04T14:44:53.558860",
       "content": "mkdir -p /var/run/sshd\necho 'root:root123' | chpasswd\nsed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config\nsed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config\nsed -i 's/Port 22/Port 2222/' /etc/ssh/sshd_config"
     },
     "config-setup_environment-7d1778e6": {
@@ -474,7 +474,7 @@
       "type": "config",
       "hash": "7d1778e6",
       "image": "ubuntu22-dev:layer-config-setup_environment-7d1778e6",
-      "created": "2025-09-04T12:02:29.077805",
+      "created": "2025-09-04T14:44:54.904571",
       "content": "echo 'export PATH=\"$HOME/.cargo/bin:$PATH\"' >> /home/pa/.bashrc\necho 'cd /opt' >> /home/pa/.bashrc"
     },
     "apt-lsb_release-322e5435": {
@@ -482,7 +482,7 @@
       "type": "apt",
       "hash": "322e5435",
       "image": "ubuntu22-dev:layer-apt-lsb_release-322e5435",
-      "created": "2025-09-03T12:16:12.105111",
+      "created": "2025-09-04T12:11:59.153417",
       "content": "lsb-release"
     },
     "config-test_config-a076469f": {
@@ -548,6 +548,14 @@
       "image": "ubuntu22-dev:layer-apt-python3_pip-1913db63",
       "created": "2025-09-04T12:01:14.505871",
       "content": "python3-pip"
+    },
+    "pip-pyyaml-58c271ec": {
+      "name": "pyyaml",
+      "type": "pip",
+      "hash": "58c271ec",
+      "image": "ubuntu22-dev:layer-pip-pyyaml-58c271ec",
+      "created": "2025-09-04T14:44:52.221716",
+      "content": "pyyaml"
     }
   },
   "layer_chains": {
@@ -588,7 +596,7 @@
   "metadata": {
     "created": "2025-09-02T16:40:06.797720",
     "version": "1.0",
-    "last_updated": "2025-09-04T12:02:29.103268"
+    "last_updated": "2025-09-04T14:44:54.937225"
   },
   "prefix_sums": {
     "prefix_1": {
@@ -1212,6 +1220,7 @@
         "apt:libssl-dev",
         "apt:ca-certificates",
         "apt:gnupg",
+        "apt:lsb-release",
         "apt:net-tools",
         "apt:g++",
         "apt:gdb",
@@ -1223,7 +1232,8 @@
         "apt:python3-pip",
         "script:create_user",
         "script:install_rust",
-        "script:setup_docker_access"
+        "script:setup_docker_access",
+        "pip:pyyaml"
       ],
       "all_layers": [
         "script:apt-get update",
@@ -1241,6 +1251,7 @@
         "apt:libssl-dev",
         "apt:ca-certificates",
         "apt:gnupg",
+        "apt:lsb-release",
         "apt:net-tools",
         "apt:g++",
         "apt:gdb",
@@ -1253,13 +1264,14 @@
         "script:useradd -m -s /bin/bash pa || true\necho 'pa:74123' | chpasswd\nusermod -aG sudo pa || true\necho 'pa ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers",
         "script:curl --proto \"=https\" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y\necho 'source ~/.cargo/env' >> ~/.bashrc",
         "script:usermod -aG docker pa || true\nsystemctl enable docker || true",
+        "pip:pyyaml",
         "config:mkdir -p /var/run/sshd\necho 'root:root123' | chpasswd\nsed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config\nsed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config\nsed -i 's/Port 22/Port 2222/' /etc/ssh/sshd_config",
         "config:echo 'export PATH=\"$HOME/.cargo/bin:$PATH\"' >> /home/pa/.bashrc\necho 'cd /opt' >> /home/pa/.bashrc"
       ],
-      "package_count": 23,
+      "package_count": 25,
       "script_count": 4,
-      "total_count": 29,
-      "created": "2025-09-04T12:02:29.103236"
+      "total_count": 31,
+      "created": "2025-09-04T14:44:54.937187"
     },
     "ubuntu22-dev:layer-script-apt_update-d629c545": {
       "packages": [
@@ -2144,65 +2156,43 @@
       "created": "2025-09-03T15:31:39.388121"
     },
     "ubuntu22-dev:layer-config-setup_ssh_config-af4afa37": {
-      "packages": [],
+      "packages": [
+        "pip:pyyaml"
+      ],
       "all_layers": [
+        "pip:pyyaml",
         "config:mkdir -p /var/run/sshd\necho 'root:root123' | chpasswd\nsed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config\nsed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config\nsed -i 's/Port 22/Port 2222/' /etc/ssh/sshd_config"
       ],
-      "package_count": 0,
+      "package_count": 1,
       "script_count": 0,
-      "total_count": 1,
-      "created": "2025-09-04T12:02:28.138028"
+      "total_count": 2,
+      "created": "2025-09-04T14:44:53.558925"
     },
     "ubuntu22-dev:layer-config-setup_environment-7d1778e6": {
-      "packages": [],
+      "packages": [
+        "pip:pyyaml"
+      ],
       "all_layers": [
+        "pip:pyyaml",
         "config:mkdir -p /var/run/sshd\necho 'root:root123' | chpasswd\nsed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config\nsed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config\nsed -i 's/Port 22/Port 2222/' /etc/ssh/sshd_config",
         "config:echo 'export PATH=\"$HOME/.cargo/bin:$PATH\"' >> /home/pa/.bashrc\necho 'cd /opt' >> /home/pa/.bashrc"
       ],
-      "package_count": 0,
+      "package_count": 1,
       "script_count": 0,
-      "total_count": 2,
-      "created": "2025-09-04T12:02:29.077860"
+      "total_count": 3,
+      "created": "2025-09-04T14:44:54.904638"
     },
     "ubuntu22-dev:layer-apt-lsb_release-322e5435": {
       "packages": [
-        "apt:openssh-server",
-        "apt:sudo",
-        "apt:curl",
-        "apt:wget",
-        "apt:git",
-        "apt:vim",
-        "apt:nano",
-        "apt:htop",
-        "apt:build-essential",
-        "apt:cmake",
-        "apt:pkg-config",
-        "apt:libssl-dev",
-        "apt:ca-certificates",
-        "apt:gnupg",
         "apt:lsb-release"
       ],
       "all_layers": [
-        "apt:openssh-server",
-        "apt:sudo",
-        "apt:curl",
-        "apt:wget",
-        "apt:git",
-        "apt:vim",
-        "apt:nano",
-        "apt:htop",
-        "apt:build-essential",
-        "apt:cmake",
-        "apt:pkg-config",
-        "apt:libssl-dev",
-        "apt:ca-certificates",
-        "apt:gnupg",
-        "script:apt-get update",
         "apt:lsb-release"
       ],
-      "package_count": 15,
-      "total_count": 16,
-      "created": "2025-09-03T12:16:12.105133"
+      "package_count": 1,
+      "script_count": 0,
+      "total_count": 1,
+      "created": "2025-09-04T12:11:59.153478"
     },
     "test-apt-demo:layer-config-test_config-a076469f": {
       "packages": [],
@@ -2423,6 +2413,18 @@
       "script_count": 1,
       "total_count": 3,
       "created": "2025-09-04T12:01:14.505926"
+    },
+    "ubuntu22-dev:layer-pip-pyyaml-58c271ec": {
+      "packages": [
+        "pip:pyyaml"
+      ],
+      "all_layers": [
+        "pip:pyyaml"
+      ],
+      "package_count": 1,
+      "script_count": 0,
+      "total_count": 1,
+      "created": "2025-09-04T14:44:52.221767"
     }
   }
 }

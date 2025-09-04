@@ -499,15 +499,19 @@ class BuildOrchestrator:
         # Check if we need APT/YUM packages and add update/makecache layers early for caching benefits
         has_apt_packages = False
         has_yum_packages = False
+        has_pip_packages = False
         if hasattr(declaration, 'heavy_setup') and declaration.heavy_setup:
             if declaration.heavy_setup.apt_packages:
                 has_apt_packages = True
             if getattr(declaration.heavy_setup, 'yum_packages', []):
                 has_yum_packages = True
+            if getattr(declaration.heavy_setup, 'pip_packages', []):
+                has_pip_packages = True
         if declaration.apt_packages:
             has_apt_packages = True
         if declaration.yum_packages:
             has_yum_packages = True
+        # note: top-level pip_packages not supported; use heavy_setup or layers
 
         if has_apt_packages:
             apt_pm = PM_REGISTRY['apt']
@@ -540,6 +544,11 @@ class BuildOrchestrator:
                         content='\n'.join(script.commands)
                     )
                     layers.append(layer)
+            # Parse PIP packages from heavy_setup
+            if getattr(declaration.heavy_setup, 'pip_packages', []):
+                for package in declaration.heavy_setup.pip_packages:
+                    safe_name = package.replace('-', '_').replace('+', 'plus').replace('.', '_')
+                    layers.append(Layer(name=safe_name, type=LayerType.PIP, content=package))
         
         # Parse from light_setup (config files and quick setups)
         if hasattr(declaration, 'light_setup') and declaration.light_setup:

@@ -262,7 +262,7 @@ class LayerReuseManager:
                 for layer in all_target_layers:
                     if layer.type in [LayerType.CONFIG]:
                         layers_to_build.append(layer)
-                    elif layer.type in [LayerType.APT, LayerType.YUM, LayerType.SCRIPT]:
+                    elif layer.type in [LayerType.APT, LayerType.YUM, LayerType.PIP, LayerType.SCRIPT]:
                         reused_layer_names.add(layer.name)
             else:
                 # Mark what we're reusing
@@ -275,7 +275,7 @@ class LayerReuseManager:
                     if layer.type in [LayerType.CONFIG]:
                         # Always rebuild configs (they're usually quick)
                         layers_to_build.append(layer)
-                    elif layer.type in [LayerType.APT, LayerType.YUM]:
+                    elif layer.type in [LayerType.APT, LayerType.YUM, LayerType.PIP]:
                         # Only build if not in intersection
                         layer_id = f"{layer.type.value}:{layer.content}"
                         if layer_id not in best_intersection:
@@ -378,7 +378,7 @@ class LayerReuseManager:
         # Build cumulative package sets since each image contains all previous packages
         sorted_layers = []
         for layer_key, layer_data in self.cache.get("layers", {}).items():
-            if layer_data.get("type") in ["apt", "yum", "script"]:
+            if layer_data.get("type") in ["apt", "yum", "pip", "script"]:
                 sorted_layers.append(layer_data)
         
         # Sort by creation time
@@ -395,7 +395,7 @@ class LayerReuseManager:
             layer_name = layer_data.get("name")
             
             if image_tag and layer_type and (layer_content or layer_name):
-                if layer_type in ["apt", "yum"]:
+                if layer_type in ["apt", "yum", "pip"]:
                     package_id = f"{layer_type}:{layer_content}"
                     cumulative_packages.add(package_id)
                 elif layer_type == "script" and layer_name:
@@ -442,7 +442,7 @@ class LayerReuseManager:
             all_items.append(item_id)
             
             # Track packages and scripts in the set (not configs)
-            if layer.type in [LayerType.APT, LayerType.YUM]:
+            if layer.type in [LayerType.APT, LayerType.YUM, LayerType.PIP]:
                 package_set.append(item_id)
             elif layer.type == LayerType.SCRIPT:
                 # Use name for script caching, not content
@@ -564,7 +564,7 @@ class LayerReuseManager:
         # Collect all apt/yum packages from layers in order
         for layer_key in sorted(self.cache.get("layers", {}).keys()):
             layer_data = self.cache["layers"][layer_key]
-            if layer_data.get("type") in ["apt", "yum"]:
+            if layer_data.get("type") in ["apt", "yum", "pip"]:
                 packages.append(f"{layer_data['type']}:{layer_data['content']}")
         
         return packages
@@ -657,7 +657,7 @@ class LayerReuseManager:
         
         # Collect all apt/yum packages from layers
         for layer_key, layer_data in self.cache.get("layers", {}).items():
-            if layer_data.get("type") in ["apt", "yum"]:
+            if layer_data.get("type") in ["apt", "yum", "pip"]:
                 packages.append(f"{layer_data['type']}:{layer_data['content']}")
         
         return packages

@@ -69,8 +69,8 @@ heavy_setup:
     - python3
     - python3-pip
 
-  pip:
-  - pyyaml
+  pip_packages:
+    - pyyaml
 
   # Script-based installations (downloading and compiling)
   script_installs:

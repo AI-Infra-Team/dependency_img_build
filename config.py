@@ -83,6 +83,7 @@ class HeavySetup:
     """Heavy setup configuration for package installations and script-based installs"""
     apt_packages: List[str] = None
     yum_packages: List[str] = None
+    pip_packages: List[str] = None
     script_installs: List[ScriptInstall] = None
     
     def __post_init__(self):
@@ -90,6 +91,8 @@ class HeavySetup:
             self.apt_packages = []
         if self.yum_packages is None:
             self.yum_packages = []
+        if self.pip_packages is None:
+            self.pip_packages = []
         if self.script_installs is None:
             self.script_installs = []
 
