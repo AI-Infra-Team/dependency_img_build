@@ -426,7 +426,7 @@
       "type": "apt",
       "hash": "f7d076c0",
       "image": "ubuntu22-dev:layer-apt-libboost_all_dev-f7d076c0",
-      "created": "2025-09-03T15:12:23.701457",
+      "created": "2025-09-04T09:33:40.753355",
       "content": "libboost-all-dev"
     },
     "apt-docker_io-40ec7d80": {
@@ -466,7 +466,7 @@
       "type": "config",
       "hash": "af4afa37",
       "image": "ubuntu22-dev:layer-config-setup_ssh_config-af4afa37",
-      "created": "2025-09-04T05:26:54.894907",
+      "created": "2025-09-04T12:02:28.137981",
       "content": "mkdir -p /var/run/sshd\necho 'root:root123' | chpasswd\nsed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config\nsed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config\nsed -i 's/Port 22/Port 2222/' /etc/ssh/sshd_config"
     },
     "config-setup_environment-7d1778e6": {
@@ -474,7 +474,7 @@
       "type": "config",
       "hash": "7d1778e6",
       "image": "ubuntu22-dev:layer-config-setup_environment-7d1778e6",
-      "created": "2025-09-04T05:26:55.663419",
+      "created": "2025-09-04T12:02:29.077805",
       "content": "echo 'export PATH=\"$HOME/.cargo/bin:$PATH\"' >> /home/pa/.bashrc\necho 'cd /opt' >> /home/pa/.bashrc"
     },
     "apt-lsb_release-322e5435": {
@@ -508,6 +508,46 @@
       "image": "test-apt-demo-reduced:layer-config-test_config-ef51f974",
       "created": "2025-09-04T08:59:48.324458",
       "content": "mkdir -p /home/testuser && echo \"Testing apt removal - htop should be removed\" > /home/testuser/test.txt"
+    },
+    "script-apt_cleanup_remove-ff406da6": {
+      "name": "apt_cleanup_remove",
+      "type": "script",
+      "hash": "ff406da6",
+      "image": "ubuntu22-dev:layer-script-apt_cleanup_remove-ff406da6",
+      "created": "2025-09-04T12:00:56.343683",
+      "content": "DEBIAN_FRONTEND=noninteractive apt-get purge -y lsb-release || true && DEBIAN_FRONTEND=noninteractive apt-get autoremove -y || true"
+    },
+    "script-apt_cleanup_remove-65c78a61": {
+      "name": "apt_cleanup_remove",
+      "type": "script",
+      "hash": "65c78a61",
+      "image": "ubuntu22-dev:layer-script-apt_cleanup_remove-65c78a61",
+      "created": "2025-09-04T09:55:39.736423",
+      "content": "DEBIAN_FRONTEND=noninteractive apt-get purge -y lsb-release nano || true && DEBIAN_FRONTEND=noninteractive apt-get autoremove -y || true"
+    },
+    "script-apt_cleanup_remove-c07380ef": {
+      "name": "apt_cleanup_remove",
+      "type": "script",
+      "hash": "c07380ef",
+      "image": "ubuntu22-dev:layer-script-apt_cleanup_remove-c07380ef",
+      "created": "2025-09-04T10:28:13.398145",
+      "content": "DEBIAN_FRONTEND=noninteractive apt-get purge -y build-essential cmake htop libssl-dev pkg-config || true && DEBIAN_FRONTEND=noninteractive apt-get autoremove -y || true"
+    },
+    "apt-python3-cde64573": {
+      "name": "python3",
+      "type": "apt",
+      "hash": "cde64573",
+      "image": "ubuntu22-dev:layer-apt-python3-cde64573",
+      "created": "2025-09-04T12:00:57.864155",
+      "content": "python3"
+    },
+    "apt-python3_pip-1913db63": {
+      "name": "python3_pip",
+      "type": "apt",
+      "hash": "1913db63",
+      "image": "ubuntu22-dev:layer-apt-python3_pip-1913db63",
+      "created": "2025-09-04T12:01:14.505871",
+      "content": "python3-pip"
     }
   },
   "layer_chains": {
@@ -548,7 +588,7 @@
   "metadata": {
     "created": "2025-09-02T16:40:06.797720",
     "version": "1.0",
-    "last_updated": "2025-09-04T08:59:48.346053"
+    "last_updated": "2025-09-04T12:02:29.103268"
   },
   "prefix_sums": {
     "prefix_1": {
@@ -1179,6 +1219,8 @@
         "apt:clang",
         "apt:libboost-all-dev",
         "apt:docker.io",
+        "apt:python3",
+        "apt:python3-pip",
         "script:create_user",
         "script:install_rust",
         "script:setup_docker_access"
@@ -1206,16 +1248,18 @@
         "apt:clang",
         "apt:libboost-all-dev",
         "apt:docker.io",
+        "apt:python3",
+        "apt:python3-pip",
         "script:useradd -m -s /bin/bash pa || true\necho 'pa:74123' | chpasswd\nusermod -aG sudo pa || true\necho 'pa ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers",
         "script:curl --proto \"=https\" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y\necho 'source ~/.cargo/env' >> ~/.bashrc",
         "script:usermod -aG docker pa || true\nsystemctl enable docker || true",
         "config:mkdir -p /var/run/sshd\necho 'root:root123' | chpasswd\nsed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config\nsed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config\nsed -i 's/Port 22/Port 2222/' /etc/ssh/sshd_config",
         "config:echo 'export PATH=\"$HOME/.cargo/bin:$PATH\"' >> /home/pa/.bashrc\necho 'cd /opt' >> /home/pa/.bashrc"
       ],
-      "package_count": 21,
+      "package_count": 23,
       "script_count": 4,
-      "total_count": 27,
-      "created": "2025-09-04T05:26:55.687482"
+      "total_count": 29,
+      "created": "2025-09-04T12:02:29.103236"
     },
     "ubuntu22-dev:layer-script-apt_update-d629c545": {
       "packages": [
@@ -1855,55 +1899,15 @@
     },
     "ubuntu22-dev:layer-apt-libboost_all_dev-f7d076c0": {
       "packages": [
-        "apt:openssh-server",
-        "apt:sudo",
-        "apt:curl",
-        "apt:wget",
-        "apt:git",
-        "apt:vim",
-        "apt:nano",
-        "apt:htop",
-        "apt:build-essential",
-        "apt:cmake",
-        "apt:pkg-config",
-        "apt:libssl-dev",
-        "apt:ca-certificates",
-        "apt:gnupg",
-        "apt:lsb-release",
-        "apt:net-tools",
-        "apt:g++",
-        "apt:gdb",
-        "apt:valgrind",
-        "apt:clang",
         "apt:libboost-all-dev"
       ],
       "all_layers": [
-        "apt:openssh-server",
-        "apt:sudo",
-        "apt:curl",
-        "apt:wget",
-        "apt:git",
-        "apt:vim",
-        "apt:nano",
-        "apt:htop",
-        "apt:build-essential",
-        "apt:cmake",
-        "apt:pkg-config",
-        "apt:libssl-dev",
-        "apt:ca-certificates",
-        "apt:gnupg",
-        "apt:lsb-release",
-        "apt:net-tools",
-        "apt:g++",
-        "apt:gdb",
-        "apt:valgrind",
-        "apt:clang",
-        "script:apt-get update",
         "apt:libboost-all-dev"
       ],
-      "package_count": 21,
-      "total_count": 22,
-      "created": "2025-09-03T15:12:23.701525"
+      "package_count": 1,
+      "script_count": 0,
+      "total_count": 1,
+      "created": "2025-09-04T09:33:40.753407"
     },
     "ubuntu22-dev:layer-apt-docker_io-40ec7d80": {
       "packages": [
@@ -2140,127 +2144,25 @@
       "created": "2025-09-03T15:31:39.388121"
     },
     "ubuntu22-dev:layer-config-setup_ssh_config-af4afa37": {
-      "packages": [
-        "script:apt_update",
-        "apt:openssh-server",
-        "apt:sudo",
-        "apt:curl",
-        "apt:wget",
-        "apt:git",
-        "apt:vim",
-        "apt:nano",
-        "apt:htop",
-        "apt:build-essential",
-        "apt:cmake",
-        "apt:pkg-config",
-        "apt:libssl-dev",
-        "apt:ca-certificates",
-        "apt:gnupg",
-        "apt:net-tools",
-        "apt:g++",
-        "apt:gdb",
-        "apt:valgrind",
-        "apt:clang",
-        "apt:libboost-all-dev",
-        "apt:docker.io",
-        "script:create_user",
-        "script:install_rust",
-        "script:setup_docker_access"
-      ],
+      "packages": [],
       "all_layers": [
-        "script:apt-get update",
-        "apt:openssh-server",
-        "apt:sudo",
-        "apt:curl",
-        "apt:wget",
-        "apt:git",
-        "apt:vim",
-        "apt:nano",
-        "apt:htop",
-        "apt:build-essential",
-        "apt:cmake",
-        "apt:pkg-config",
-        "apt:libssl-dev",
-        "apt:ca-certificates",
-        "apt:gnupg",
-        "apt:net-tools",
-        "apt:g++",
-        "apt:gdb",
-        "apt:valgrind",
-        "apt:clang",
-        "apt:libboost-all-dev",
-        "apt:docker.io",
-        "script:useradd -m -s /bin/bash pa || true\necho 'pa:74123' | chpasswd\nusermod -aG sudo pa || true\necho 'pa ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers",
-        "script:curl --proto \"=https\" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y\necho 'source ~/.cargo/env' >> ~/.bashrc",
-        "script:usermod -aG docker pa || true\nsystemctl enable docker || true",
         "config:mkdir -p /var/run/sshd\necho 'root:root123' | chpasswd\nsed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config\nsed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config\nsed -i 's/Port 22/Port 2222/' /etc/ssh/sshd_config"
       ],
-      "package_count": 21,
-      "script_count": 4,
-      "total_count": 26,
-      "created": "2025-09-04T05:26:54.895021"
+      "package_count": 0,
+      "script_count": 0,
+      "total_count": 1,
+      "created": "2025-09-04T12:02:28.138028"
     },
     "ubuntu22-dev:layer-config-setup_environment-7d1778e6": {
-      "packages": [
-        "script:apt_update",
-        "apt:openssh-server",
-        "apt:sudo",
-        "apt:curl",
-        "apt:wget",
-        "apt:git",
-        "apt:vim",
-        "apt:nano",
-        "apt:htop",
-        "apt:build-essential",
-        "apt:cmake",
-        "apt:pkg-config",
-        "apt:libssl-dev",
-        "apt:ca-certificates",
-        "apt:gnupg",
-        "apt:net-tools",
-        "apt:g++",
-        "apt:gdb",
-        "apt:valgrind",
-        "apt:clang",
-        "apt:libboost-all-dev",
-        "apt:docker.io",
-        "script:create_user",
-        "script:install_rust",
-        "script:setup_docker_access"
-      ],
+      "packages": [],
       "all_layers": [
-        "script:apt-get update",
-        "apt:openssh-server",
-        "apt:sudo",
-        "apt:curl",
-        "apt:wget",
-        "apt:git",
-        "apt:vim",
-        "apt:nano",
-        "apt:htop",
-        "apt:build-essential",
-        "apt:cmake",
-        "apt:pkg-config",
-        "apt:libssl-dev",
-        "apt:ca-certificates",
-        "apt:gnupg",
-        "apt:net-tools",
-        "apt:g++",
-        "apt:gdb",
-        "apt:valgrind",
-        "apt:clang",
-        "apt:libboost-all-dev",
-        "apt:docker.io",
-        "script:useradd -m -s /bin/bash pa || true\necho 'pa:74123' | chpasswd\nusermod -aG sudo pa || true\necho 'pa ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers",
-        "script:curl --proto \"=https\" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y\necho 'source ~/.cargo/env' >> ~/.bashrc",
-        "script:usermod -aG docker pa || true\nsystemctl enable docker || true",
         "config:mkdir -p /var/run/sshd\necho 'root:root123' | chpasswd\nsed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config\nsed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config\nsed -i 's/Port 22/Port 2222/' /etc/ssh/sshd_config",
         "config:echo 'export PATH=\"$HOME/.cargo/bin:$PATH\"' >> /home/pa/.bashrc\necho 'cd /opt' >> /home/pa/.bashrc"
       ],
-      "package_count": 21,
-      "script_count": 4,
-      "total_count": 27,
-      "created": "2025-09-04T05:26:55.663517"
+      "package_count": 0,
+      "script_count": 0,
+      "total_count": 2,
+      "created": "2025-09-04T12:02:29.077860"
     },
     "ubuntu22-dev:layer-apt-lsb_release-322e5435": {
       "packages": [
@@ -2455,6 +2357,72 @@
       "script_count": 0,
       "total_count": 1,
       "created": "2025-09-04T08:59:48.346029"
+    },
+    "ubuntu22-dev:layer-script-apt_cleanup_remove-ff406da6": {
+      "packages": [
+        "script:apt_cleanup_remove"
+      ],
+      "all_layers": [
+        "script:DEBIAN_FRONTEND=noninteractive apt-get purge -y lsb-release || true && DEBIAN_FRONTEND=noninteractive apt-get autoremove -y || true"
+      ],
+      "package_count": 0,
+      "script_count": 1,
+      "total_count": 1,
+      "created": "2025-09-04T12:00:56.343716"
+    },
+    "ubuntu22-dev:layer-script-apt_cleanup_remove-65c78a61": {
+      "packages": [
+        "script:apt_cleanup_remove"
+      ],
+      "all_layers": [
+        "script:DEBIAN_FRONTEND=noninteractive apt-get purge -y lsb-release nano || true && DEBIAN_FRONTEND=noninteractive apt-get autoremove -y || true"
+      ],
+      "package_count": 0,
+      "script_count": 1,
+      "total_count": 1,
+      "created": "2025-09-04T09:55:39.736478"
+    },
+    "ubuntu22-dev:layer-script-apt_cleanup_remove-c07380ef": {
+      "packages": [
+        "script:apt_cleanup_remove"
+      ],
+      "all_layers": [
+        "script:DEBIAN_FRONTEND=noninteractive apt-get purge -y build-essential cmake htop libssl-dev pkg-config || true && DEBIAN_FRONTEND=noninteractive apt-get autoremove -y || true"
+      ],
+      "package_count": 0,
+      "script_count": 1,
+      "total_count": 1,
+      "created": "2025-09-04T10:28:13.398367"
+    },
+    "ubuntu22-dev:layer-apt-python3-cde64573": {
+      "packages": [
+        "script:apt_cleanup_remove",
+        "apt:python3"
+      ],
+      "all_layers": [
+        "script:DEBIAN_FRONTEND=noninteractive apt-get purge -y lsb-release || true && DEBIAN_FRONTEND=noninteractive apt-get autoremove -y || true",
+        "apt:python3"
+      ],
+      "package_count": 1,
+      "script_count": 1,
+      "total_count": 2,
+      "created": "2025-09-04T12:00:57.864194"
+    },
+    "ubuntu22-dev:layer-apt-python3_pip-1913db63": {
+      "packages": [
+        "script:apt_cleanup_remove",
+        "apt:python3",
+        "apt:python3-pip"
+      ],
+      "all_layers": [
+        "script:DEBIAN_FRONTEND=noninteractive apt-get purge -y lsb-release || true && DEBIAN_FRONTEND=noninteractive apt-get autoremove -y || true",
+        "apt:python3",
+        "apt:python3-pip"
+      ],
+      "package_count": 2,
+      "script_count": 1,
+      "total_count": 3,
+      "created": "2025-09-04T12:01:14.505926"
     }
   }
 }

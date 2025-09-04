@@ -14,6 +14,7 @@ class LayerType(Enum):
     BASE = "base"
     APT = "apt"
     YUM = "yum"
+    PIP = "pip"
     SCRIPT = "script"
     CONFIG = "config"
     BATCH = "batch"

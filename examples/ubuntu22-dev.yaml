@@ -66,6 +66,11 @@ heavy_setup:
 
     # Docker
     - docker.io
+    - python3
+    - python3-pip
+
+  pip:
+  - pyyaml
 
   # Script-based installations (downloading and compiling)
   script_installs:

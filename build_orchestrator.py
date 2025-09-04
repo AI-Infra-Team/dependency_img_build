@@ -16,6 +16,106 @@ from cache_manager import CacheManager
 from env_manager import EnvironmentManager, EnvVarConfig
 from reuse import LayerReuseManager
 
+# Package manager implementations
+
+# Abstract package manager interfaces and concrete implementations
+from abc import ABC, abstractmethod
+
+class PackageManager(ABC):
+    @property
+    @abstractmethod
+    def name(self) -> str: ...
+
+    @property
+    @abstractmethod
+    def needs_refresh(self) -> bool: ...
+
+    @abstractmethod
+    def refresh_cmd(self) -> Optional[str]: ...
+
+    @abstractmethod
+    def install_cmd(self, package: str) -> str: ...
+
+    @abstractmethod
+    def remove_cmd(self, packages: List[str]) -> str: ...
+
+
+class AptManager(PackageManager):
+    @property
+    def name(self) -> str:
+        return 'apt'
+
+    @property
+    def needs_refresh(self) -> bool:
+        return True
+
+    def refresh_cmd(self) -> Optional[str]:
+        return 'apt-get update'
+
+    def install_cmd(self, package: str) -> str:
+        return f"DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends {package}"
+
+    def remove_cmd(self, packages: List[str]) -> str:
+        pkgs = ' '.join(packages)
+        return (
+            f"DEBIAN_FRONTEND=noninteractive apt-get purge -y {pkgs}"
+            " || true && DEBIAN_FRONTEND=noninteractive apt-get autoremove -y || true"
+        )
+
+
+class YumManager(PackageManager):
+    @property
+    def name(self) -> str:
+        return 'yum'
+
+    @property
+    def needs_refresh(self) -> bool:
+        return True
+
+    def refresh_cmd(self) -> Optional[str]:
+        return 'yum makecache'
+
+    def install_cmd(self, package: str) -> str:
+        return f"yum install -y {package}"
+
+    def remove_cmd(self, packages: List[str]) -> str:
+        return "yum remove -y " + ' '.join(packages) + " || true"
+
+
+class PipManager(PackageManager):
+    @property
+    def name(self) -> str:
+        return 'pip'
+
+    @property
+    def needs_refresh(self) -> bool:
+        return False
+
+    def refresh_cmd(self) -> Optional[str]:
+        return None
+
+    def install_cmd(self, package: str) -> str:
+        return f"python3 -m pip install --no-cache-dir {package}"
+
+    def remove_cmd(self, packages: List[str]) -> str:
+        return "python3 -m pip uninstall -y " + ' '.join(packages) + " || true"
+
+
+PM_REGISTRY: Dict[str, PackageManager] = {
+    'apt': AptManager(),
+    'yum': YumManager(),
+    'pip': PipManager(),
+}
+
+def pm_for_layer_type(layer_type: LayerType) -> Optional[PackageManager]:
+    if layer_type == LayerType.APT:
+        return PM_REGISTRY['apt']
+    if layer_type == LayerType.YUM:
+        return PM_REGISTRY['yum']
+    if layer_type == LayerType.PIP:
+        return PM_REGISTRY['pip']
+    return None
+
 
 def sudo_prefix() -> List[str]:
     """Return sudo prefix if not running as root"""
@@ -126,7 +226,6 @@ class BuildOrchestrator:
                     parent_image = base_image
                 else:
                     parent_image = base_image
-                parent_image = base_image
                 
                 print(f"📊 Reusing {len(reused_layer_names)} layers, building {len(layers_to_build)}")
                 packages_reused = len([name for name in reused_layer_names if any(l.name == name and l.type == LayerType.APT for l in all_layers)])
@@ -140,26 +239,29 @@ class BuildOrchestrator:
                 cleanup_layers: List[Layer] = []
                 if cleanup_commands:
                     print(f"   ⚠️  {len(cleanup_commands)} cleanup operations available for extra dependencies")
-                    apt_removes = []
+                    # Group removals by manager
+                    remove_groups: Dict[str, List[str]] = {}
                     for cleanup in cleanup_commands:
-                        if cleanup['type'] == 'apt_remove':
-                            apt_list = cleanup.get('packages', [])
-                            apt_removes.extend(apt_list)
-                            print(f"      - {cleanup['description']}: {', '.join(apt_list[:3])}{'...' if len(apt_list) > 3 else ''}")
-                        elif cleanup['type'] == 'script_remove':
+                        ctype = cleanup.get('type')
+                        if ctype in ('apt_remove', 'yum_remove', 'pip_remove'):
+                            pkgs = cleanup.get('packages', [])
+                            pm_name = ctype.split('_', 1)[0]
+                            remove_groups.setdefault(pm_name, []).extend(pkgs)
+                            print(f"      - {cleanup['description']}: {', '.join(pkgs[:3])}{'...' if len(pkgs) > 3 else ''}")
+                        elif ctype == 'script_remove':
                             print(f"      - {cleanup['description']}: {', '.join(cleanup.get('scripts', [])[:3])}{'...' if len(cleanup.get('scripts', [])) > 3 else ''}")
-                    # Create an apt cleanup layer if needed
-                    if apt_removes:
-                        cleanup_cmd = (
-                            "DEBIAN_FRONTEND=noninteractive apt-get purge -y " + ' '.join(sorted(set(apt_removes))) +
-                            " || true && DEBIAN_FRONTEND=noninteractive apt-get autoremove -y || true"
-                        )
-                        cleanup_layers.append(Layer(
-                            name="apt_cleanup_remove",
-                            type=LayerType.SCRIPT,
-                            content=cleanup_cmd
-                        ))
-                        # Prepend cleanup layer so extra packages are removed before proceeding
+                    # Create cleanup layers per manager
+                    for pm_name, pkgs in remove_groups.items():
+                        pkgs = sorted(set(pkgs))
+                        pm = PM_REGISTRY.get(pm_name)
+                        if pm and pkgs:
+                            cleanup_cmd = pm.remove_cmd(pkgs)
+                            cleanup_layers.append(Layer(
+                                name=f"{pm_name}_cleanup_remove",
+                                type=LayerType.SCRIPT,
+                                content=cleanup_cmd
+                            ))
+                    if cleanup_layers:
                         layers_to_build = cleanup_layers + layers_to_build
 
                 # Summarize the concrete build plan and reuse list
@@ -169,6 +271,18 @@ class BuildOrchestrator:
                 reuse_list = [f"{l.type.value}:{l.name}" for l in all_layers if l.name in reused_layer_names and l.type != LayerType.BASE]
                 if reuse_list:
                     print(f"   ♻️  Reuse list: {', '.join(reuse_list)}")
+                # Also print missing (to-be-built) non-maintenance items for clarity
+                missing_items: List[str] = []
+                maintenance_names = {"apt_update", "yum_makecache", "apt_refresh", "yum_refresh"}
+                for l in layers_to_build:
+                    if l.type in (LayerType.APT, LayerType.YUM, LayerType.SCRIPT):
+                        if l.name in maintenance_names or l.name.endswith("_cleanup_remove"):
+                            continue
+                        missing_items.append(f"{l.type.value}:{l.name}")
+                if missing_items:
+                    print(f"   ❗ Missing list:")
+                    for it in missing_items:
+                        print(f"   ❗ {it}")
             
             # Build the required layers
             built_count = 0
@@ -188,19 +302,42 @@ class BuildOrchestrator:
                     print(f"   ✅ Reusing layer: {layer.name}")
             print(f"   Total reused layers: {reused_count}")
             
-            # If we need to build APT packages, run apt-get update first
-            has_apt_to_build = any(l.type == LayerType.APT for l in layers_to_build)
-            if has_apt_to_build and parent_image != declaration.base_image:
-                print(f"🔄 Need to refresh apt cache for continuing build...")
-                # We're continuing from an existing image, need fresh apt cache
-                apt_update_layer = Layer(
-                    name="apt_refresh",
-                    type=LayerType.SCRIPT,
-                    content="apt-get update"
-                )
-                image_tag = self._build_layer(apt_update_layer, parent_image, env_vars, declaration.image_name)
-                parent_image = image_tag
-                print(f"✓ Refreshed apt cache")
+            # If we need to build package layers on top of a reused base, preview and run per-PM refresh
+            if parent_image != declaration.base_image:
+                managers_needed = sorted({
+                    pm_for_layer_type(l.type).name
+                    for l in layers_to_build
+                    if pm_for_layer_type(l.type) is not None
+                })
+                # Preview final steps (refresh + actual build layers)
+                planned_steps = []
+                for pm_name in managers_needed:
+                    pm = PM_REGISTRY.get(pm_name)
+                    if pm and pm.needs_refresh and pm.refresh_cmd():
+                        planned_steps.append(f"script:{pm.name}_refresh")
+                planned_steps.extend([f"{l.type.value}:{l.name}" for l in layers_to_build])
+                if planned_steps:
+                    print(f"   ▶ Next steps to build (order):")
+                    for step in planned_steps:
+                        print(f"   🛠️  {step}")
+
+                # Execute refresh
+                pm_refresh_done = set()
+                for pm_name in managers_needed:
+                    pm = PM_REGISTRY.get(pm_name)
+                    if pm and pm.needs_refresh and pm_name not in pm_refresh_done:
+                        print(f"🔄 Need to refresh {pm.name} metadata for continuing build...")
+                        cmd = pm.refresh_cmd()
+                        if cmd:
+                            refresh_layer = Layer(
+                                name=f"{pm.name}_refresh",
+                                type=LayerType.SCRIPT,
+                                content=cmd
+                            )
+                            image_tag = self._build_layer(refresh_layer, parent_image, env_vars, declaration.image_name)
+                            parent_image = image_tag
+                        pm_refresh_done.add(pm_name)
+                        print(f"✓ Refreshed {pm.name} metadata")
             
             print(f"\n🔨 Building {len(layers_to_build)} new layers...")
             
@@ -208,17 +345,18 @@ class BuildOrchestrator:
             for i, layer in enumerate(layers_to_build):
                 print(f"\n📦 Building layer {i+1}/{len(layers_to_build)}: {layer.name}")
                 
-                # For the first APT package when building from scratch, add apt-get update
-                if layer.type == LayerType.APT and parent_image == declaration.base_image and built_count == 0:
-                    print(f"   Adding apt-get update before first APT package...")
-                    apt_update_layer = Layer(
-                        name="apt_update",
+                # For the first package-manager layer when building from base, add metadata refresh
+                pm = pm_for_layer_type(layer.type)
+                if pm and parent_image == declaration.base_image and built_count == 0 and pm.needs_refresh and pm.refresh_cmd():
+                    print(f"   Adding {pm.name} metadata refresh before first {pm.name} package...")
+                    pm_update_layer = Layer(
+                        name=f"{pm.name}_update",
                         type=LayerType.SCRIPT,
-                        content="apt-get update"
+                        content=pm.refresh_cmd()
                     )
-                    image_tag = self._build_layer(apt_update_layer, parent_image, env_vars, declaration.image_name)
+                    image_tag = self._build_layer(pm_update_layer, parent_image, env_vars, declaration.image_name)
                     parent_image = image_tag
-                    print(f"✓ Updated apt cache")
+                    print(f"✓ Refreshed {pm.name} metadata")
                 
                 # Build the layer
                 print(f"   Building layer {layer.name}...")
@@ -358,35 +496,40 @@ class BuildOrchestrator:
         )
         layers.append(base_layer)
         
-        # Check if we need apt packages
+        # Check if we need APT/YUM packages and add update/makecache layers early for caching benefits
         has_apt_packages = False
-        if hasattr(declaration, 'heavy_setup') and declaration.heavy_setup and declaration.heavy_setup.apt_packages:
+        has_yum_packages = False
+        if hasattr(declaration, 'heavy_setup') and declaration.heavy_setup:
+            if declaration.heavy_setup.apt_packages:
+                has_apt_packages = True
+            if getattr(declaration.heavy_setup, 'yum_packages', []):
+                has_yum_packages = True
+        if declaration.apt_packages:
             has_apt_packages = True
-        elif declaration.apt_packages:
-            has_apt_packages = True
-        
-        # Add apt-update layer if we have apt packages to install
+        if declaration.yum_packages:
+            has_yum_packages = True
+
         if has_apt_packages:
-            apt_update_layer = Layer(
-                name="apt_update",
-                type=LayerType.SCRIPT,
-                content="apt-get update"
-            )
-            layers.append(apt_update_layer)
+            apt_pm = PM_REGISTRY['apt']
+            if apt_pm.refresh_cmd():
+                layers.append(Layer(name="apt_update", type=LayerType.SCRIPT, content=apt_pm.refresh_cmd()))
+        if has_yum_packages:
+            yum_pm = PM_REGISTRY['yum']
+            if yum_pm.refresh_cmd():
+                layers.append(Layer(name="yum_makecache", type=LayerType.SCRIPT, content=yum_pm.refresh_cmd()))
         
         # Parse from heavy_setup first (current structure)
         if hasattr(declaration, 'heavy_setup') and declaration.heavy_setup:
             # Parse APT packages from heavy_setup
             if declaration.heavy_setup.apt_packages:
                 for package in declaration.heavy_setup.apt_packages:
-                    # Replace special characters in package names for layer naming
                     safe_name = package.replace('-', '_').replace('+', 'plus').replace('.', '_')
-                    layer = Layer(
-                        name=safe_name,
-                        type=LayerType.APT,
-                        content=package
-                    )
-                    layers.append(layer)
+                    layers.append(Layer(name=safe_name, type=LayerType.APT, content=package))
+            # Parse YUM packages from heavy_setup
+            if getattr(declaration.heavy_setup, 'yum_packages', []):
+                for package in declaration.heavy_setup.yum_packages:
+                    safe_name = package.replace('-', '_').replace('+', 'plus').replace('.', '_')
+                    layers.append(Layer(name=safe_name, type=LayerType.YUM, content=package))
             
             # Parse script installs from heavy_setup
             if declaration.heavy_setup.script_installs:
@@ -422,6 +565,11 @@ class BuildOrchestrator:
                         content=package
                     )
                     layers.append(layer)
+            # Parse YUM packages (future format)
+            if 'yum' in declaration.layers:
+                for package in declaration.layers['yum']:
+                    safe_name = package.replace('-', '_').replace('+', 'plus').replace('.', '_')
+                    layers.append(Layer(name=safe_name, type=LayerType.YUM, content=package))
             
             # Parse scripts
             if 'scripts' in declaration.layers:
@@ -468,8 +616,8 @@ class BuildOrchestrator:
             self.work_dir
         ]
         
-        # For APT packages, add retry logic
-        max_retries = 3 if layer.type == LayerType.APT else 1
+        # For package-managed layers, add retry logic
+        max_retries = 3 if pm_for_layer_type(layer.type) is not None else 1
         
         for attempt in range(max_retries):
             if max_retries > 1:
@@ -512,11 +660,15 @@ class BuildOrchestrator:
                 lines.append(f"ENV {key}=\"{value}\"")
         
         # Generate RUN command based on layer type
-        if layer.type == LayerType.APT:
-            print(f"      APT package: {layer.content}")
-            # Add retry logic for APT commands to handle network issues
-            apt_cmd = f"DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends {layer.content}"
-            retry_cmd = f"RUN for i in {{1..3}}; do {apt_cmd} && break || (echo \"APT install attempt $i failed, retrying in 5 seconds...\" && sleep 5); done"
+        pm = pm_for_layer_type(layer.type)
+        if pm is not None:
+            print(f"      {pm.name.upper()} package: {layer.content}")
+            install_cmd = pm.install_cmd(layer.content)
+            retry_cmd = (
+                "RUN for i in {1..3}; do "
+                + install_cmd +
+                " && break || (echo \"Install attempt $i failed, retrying in 5 seconds...\" && sleep 5); done"
+            )
             lines.append(retry_cmd)
         elif layer.type == LayerType.SCRIPT:
             print(f"      Script commands: {len(layer.content.split(chr(10)))} lines")

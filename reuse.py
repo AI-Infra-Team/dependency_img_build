@@ -99,7 +99,7 @@ class LayerReuseManager:
                 continue
             
             # For packages, track them in the set
-            if layer.type in [LayerType.APT, LayerType.YUM]:
+            if layer.type in [LayerType.APT, LayerType.YUM, LayerType.PIP]:
                 layer_id = f"{layer.type.value}:{layer.content}"
                 target_set.add(layer_id)
                 target_layer_map[layer_id] = layer
@@ -295,38 +295,50 @@ class LayerReuseManager:
         
         return best_image, reused_layer_names, layers_to_build, cleanup_commands
     
-    def generate_cleanup_commands(self, extra_packages: Set[str]) -> List[str]:
-        """Generate safe cleanup commands for removing extra packages"""
-        cleanup_commands = []
-        
+    def generate_cleanup_commands(self, extra_packages: Set[str]) -> List[Dict]:
+        """Generate safe cleanup commands for removing extra packages across managers"""
+        cleanup_commands: List[Dict] = []
         if not extra_packages:
             return cleanup_commands
-            
-        apt_packages = []
-        script_names = []
-        
+
+        groups: Dict[str, List[str]] = {'apt': [], 'yum': [], 'pip': []}
+        script_names: List[str] = []
+
         for item in extra_packages:
             if item.startswith('apt:'):
-                package_name = item[4:]  # Remove 'apt:' prefix
-                apt_packages.append(package_name)
+                groups['apt'].append(item[4:])
+            elif item.startswith('yum:'):
+                groups['yum'].append(item[4:])
+            elif item.startswith('pip:'):
+                groups['pip'].append(item[4:])
             elif item.startswith('script:'):
-                script_name = item[7:]  # Remove 'script:' prefix
-                script_names.append(script_name)
-        
-        if apt_packages:
+                script_names.append(item[7:])
+
+        if groups['apt']:
             cleanup_commands.append({
                 'type': 'apt_remove',
-                'packages': apt_packages,
-                'description': f'Safe removal of {len(apt_packages)} extra APT packages'
+                'packages': groups['apt'],
+                'description': f"Safe removal of {len(groups['apt'])} extra APT packages"
             })
-            
+        if groups['yum']:
+            cleanup_commands.append({
+                'type': 'yum_remove',
+                'packages': groups['yum'],
+                'description': f"Safe removal of {len(groups['yum'])} extra YUM packages"
+            })
+        if groups['pip']:
+            cleanup_commands.append({
+                'type': 'pip_remove',
+                'packages': groups['pip'],
+                'description': f"Uninstall {len(groups['pip'])} extra PIP packages"
+            })
         if script_names:
             cleanup_commands.append({
                 'type': 'script_remove',
                 'scripts': script_names,
-                'description': f'Removal of {len(script_names)} extra scripts (if remove_commands available)'
+                'description': f"Removal of {len(script_names)} extra scripts (if remove_commands available)"
             })
-            
+
         return cleanup_commands
     
     def _build_image_sets_from_layers(self):
