@@ -54,7 +54,7 @@ heavy_setup:
     - libssl-dev
     - ca-certificates
     - gnupg
-    # - lsb-release
+    - lsb-release
     - net-tools
 
     # C++ development tools

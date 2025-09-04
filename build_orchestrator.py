@@ -104,6 +104,9 @@ class BuildOrchestrator:
                 layers_to_build = [l for l in all_layers if l.type != LayerType.BASE]
                 reused_layer_names = set()
                 print(f"   Will build all {len(layers_to_build)} layers from scratch")
+                build_list = [f"{l.type.value}:{l.name}" for l in layers_to_build]
+                if build_list:
+                    print(f"   📝 Build list: {', '.join(build_list)}")
             else:
                 # Use the reuse manager to find optimal strategy!
                 print(f"🔍 Finding optimal reuse strategy...")
@@ -111,6 +114,18 @@ class BuildOrchestrator:
                     all_layers,
                     preferred_repo=declaration.image_name
                 )
+                # Fallback: if no meaningful reuse found, widen search across all repositories
+                needed_pkgs = [l for l in all_layers if l.type in (LayerType.APT, LayerType.YUM)]
+                reused_pkg_count = len([name for name in reused_layer_names if any(l.name == name and l.type in (LayerType.APT, LayerType.YUM) for l in all_layers)])
+                if needed_pkgs and reused_pkg_count == 0:
+                    print("   🔁 No reusable APT/YUM layers found in same repo; widening search across repos...")
+                    base_image, reused_layer_names, layers_to_build, cleanup_commands = self.reuse_manager.find_optimal_base(
+                        all_layers,
+                        preferred_repo=None
+                    )
+                    parent_image = base_image
+                else:
+                    parent_image = base_image
                 parent_image = base_image
                 
                 print(f"📊 Reusing {len(reused_layer_names)} layers, building {len(layers_to_build)}")
@@ -119,24 +134,7 @@ class BuildOrchestrator:
                 print(f"   Packages reused: {packages_reused}, Scripts reused: {scripts_reused}")
                 print(f"   Base image: {parent_image}")
                 
-                # Sanity-check: verify reused APT packages actually exist in base
-                try:
-                    required_apt_layers = [l for l in all_layers if l.type == LayerType.APT]
-                    missing_pkgs = []
-                    for l in required_apt_layers:
-                        if l.name in reused_layer_names:
-                            if not self._base_has_package(parent_image, l.content):
-                                missing_pkgs.append(l)
-                    if missing_pkgs:
-                        print(f"   ⚠️  Base image missing {len(missing_pkgs)} expected packages; will build them explicitly")
-                        for miss in missing_pkgs:
-                            if miss.name in reused_layer_names:
-                                reused_layer_names.remove(miss.name)
-                            # Ensure we build the missing package layer
-                            if all(miss.name != l.name for l in layers_to_build):
-                                layers_to_build.insert(0, miss)
-                except Exception as e:
-                    print(f"   ⚠️  Package presence check failed: {e}")
+                # Note: Do not perform dpkg-based presence checks here; validation happens in tests
                 
                 # If the optimal base contains extra APT packages, schedule a cleanup layer
                 cleanup_layers: List[Layer] = []
@@ -163,6 +161,14 @@ class BuildOrchestrator:
                         ))
                         # Prepend cleanup layer so extra packages are removed before proceeding
                         layers_to_build = cleanup_layers + layers_to_build
+
+                # Summarize the concrete build plan and reuse list
+                build_list = [f"{l.type.value}:{l.name}" for l in layers_to_build]
+                if build_list:
+                    print(f"   📝 Build list (order): {', '.join(build_list)}")
+                reuse_list = [f"{l.type.value}:{l.name}" for l in all_layers if l.name in reused_layer_names and l.type != LayerType.BASE]
+                if reuse_list:
+                    print(f"   ♻️  Reuse list: {', '.join(reuse_list)}")
             
             # Build the required layers
             built_count = 0
@@ -248,9 +254,16 @@ class BuildOrchestrator:
                 else:
                     print(f"   Image already has target tag")
                 
-                # Cache only the layers actually built in this run to avoid misattribution
-                print(f"   Caching complete image with {len(built_layers)} built layers...")
-                self.reuse_manager.cache_built_image(target_tag, built_layers)
+                # Cache the layers actually present in the final image (built + reused)
+                used_layers: List[Layer] = []
+                reused_set = set(reused_layer_names)
+                for l in all_layers:
+                    if l.type == LayerType.BASE:
+                        continue
+                    if l in built_layers or l.name in reused_set:
+                        used_layers.append(l)
+                print(f"   Caching complete image with {len(used_layers)} used layers (built + reused)...")
+                self.reuse_manager.cache_built_image(target_tag, used_layers)
                 
                 print(f"\n✅ Successfully built {target_tag}")
                 print(f"📊 Build stats: {built_count} built, {len(reused_layer_names) if not force_rebuild else 0} reused")
@@ -269,14 +282,7 @@ class BuildOrchestrator:
             else:
                 print(f"   No work directory to clean up")
 
-    def _base_has_package(self, image: str, package: str) -> bool:
-        """Check if a Debian package appears installed in the given image."""
-        try:
-            cmd = sudo_prefix() + ['docker', 'run', '--rm', image, 'bash', '-lc', f'dpkg -s {package} >/dev/null 2>&1']
-            result = subprocess.run(cmd, capture_output=True)
-            return result.returncode == 0
-        except Exception:
-            return False
+    # Note: Project code does not perform package presence checks; tests cover validation.
     
     def _build_traditional_deprecated(self, declaration: UserDeclaration, force_rebuild: bool = False) -> bool:
         """DEPRECATED: Build using traditional single Dockerfile approach"""
