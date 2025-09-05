@@ -7,6 +7,13 @@ container_name: "ubuntu22-dev-container"
 image_tag: "latest"
 ssh_port: 2222
 
+# Optional: Custom APT sources (override /etc/apt/sources.list)
+apt_sources:
+  - "deb http://mirrors.aliyun.com/ubuntu/ jammy main restricted universe multiverse"
+  - "deb http://mirrors.aliyun.com/ubuntu/ jammy-updates main restricted universe multiverse"
+  - "deb http://mirrors.aliyun.com/ubuntu/ jammy-backports main restricted universe multiverse"
+  - "deb http://mirrors.aliyun.com/ubuntu/ jammy-security main restricted universe multiverse"
+
 # Environment variable inheritance configuration
 inherit_env: true          # Enable environment variable inheritance
 inherit_proxy: true        # Inherit proxy settings (http_proxy, https_proxy, etc.)

@@ -3,6 +3,9 @@ from typing import Dict, List, Optional, Any
 from enum import Enum
 import hashlib
 
+# Fixed path inside images to store dependency metadata for detection
+IMAGE_DEP_METADATA_PATH = "/opt/dependency_img_build/dependencies.list"
+
 
 class CacheLevel(Enum):
     LOCAL = "local"
@@ -132,6 +135,9 @@ class UserDeclaration:
     inherit_custom_env: List[str] = None
     exclude_env: List[str] = None
     
+    # APT sources configuration (lines to write to /etc/apt/sources.list)
+    apt_sources: List[str] = None
+    
     def __post_init__(self):
         if self.apt_packages is None:
             self.apt_packages = []
@@ -145,6 +151,8 @@ class UserDeclaration:
             self.inherit_custom_env = []
         if self.exclude_env is None:
             self.exclude_env = []
+        if self.apt_sources is None:
+            self.apt_sources = []
 
 
 @dataclass

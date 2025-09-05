@@ -95,6 +95,7 @@ class DeclarationParser:
             inherit_timezone=data.get('inherit_timezone', True),
             inherit_custom_env=data.get('inherit_custom_env', []),
             exclude_env=data.get('exclude_env', [])
+            ,apt_sources=data.get('apt_sources', [])
         )
     
     def validate_declaration(self, declaration: UserDeclaration) -> bool:

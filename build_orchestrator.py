@@ -5,10 +5,10 @@ import shutil
 import hashlib
 import json
 import concurrent.futures
-from typing import List, Optional, Dict, Tuple
+from typing import List, Optional, Dict, Tuple, Set
 from datetime import datetime, timedelta
 from pathlib import Path
-from config import UserDeclaration, CacheConfig, CacheLevel, Layer, LayerType
+from config import UserDeclaration, CacheConfig, CacheLevel, Layer, LayerType, IMAGE_DEP_METADATA_PATH
 from parser import DeclarationParser
 from dockerfile_generator import DockerfileGenerator
 from build_tracker import BuildTracker
@@ -117,11 +117,7 @@ def pm_for_layer_type(layer_type: LayerType) -> Optional[PackageManager]:
     return None
 
 
-def sudo_prefix() -> List[str]:
-    """Return sudo prefix if not running as root"""
-    if os.geteuid() != 0:
-        return ['sudo', '-E']
-    return []
+from utils import sudo_prefix
 
 
 class BuildOrchestrator:
@@ -135,35 +131,10 @@ class BuildOrchestrator:
         self.cache_manager = CacheManager(self.cache_config)
         self.reuse_manager = LayerReuseManager()
         
-        # Layer cache file (for backward compatibility)
-        self.layer_cache_file = "layers_cache.json"
-        self.layer_cache = self._load_layer_cache()
-        
         # Work directory for Dockerfiles
         self.work_dir = None
     
-    def _load_layer_cache(self) -> Dict:
-        """Load layer cache from file"""
-        if os.path.exists(self.layer_cache_file):
-            try:
-                with open(self.layer_cache_file, 'r') as f:
-                    return json.load(f)
-            except:
-                pass
-        return {
-            "layers": {},
-            "layer_chains": {},
-            "metadata": {
-                "created": datetime.now().isoformat(),
-                "version": "1.0"
-            }
-        }
-    
-    def _save_layer_cache(self):
-        """Save layer cache to file"""
-        self.layer_cache["metadata"]["last_updated"] = datetime.now().isoformat()
-        with open(self.layer_cache_file, 'w') as f:
-            json.dump(self.layer_cache, f, indent=2)
+    # Legacy layer cache removed; rely on in-image metadata only
     
     def build_image(self, config_file: str, force_rebuild: bool = False) -> bool:
         """Build Docker image from configuration file"""
@@ -197,6 +168,13 @@ class BuildOrchestrator:
             print(f"🌍 Processing environment variables...")
             env_vars = self._get_env_vars(declaration)
             print(f"   Found {len(env_vars)} environment variables")
+
+            # Compute naming scheme components based on base image
+            base_repo, base_tag = self._parse_base_image(declaration.base_image)
+            self.base_repo_slug = self._slugify(base_repo)
+            self.base_tag_slug = self._slugify(base_tag or 'latest')
+            # Repository name with base prefix
+            self.repo_name = f"{self.base_repo_slug}__{declaration.image_name}"
             
             if force_rebuild:
                 print("🔥 Force rebuild requested - ignoring cache")
@@ -212,20 +190,11 @@ class BuildOrchestrator:
                 print(f"🔍 Finding optimal reuse strategy...")
                 base_image, reused_layer_names, layers_to_build, cleanup_commands = self.reuse_manager.find_optimal_base(
                     all_layers,
-                    preferred_repo=declaration.image_name
+                    preferred_repo=self.repo_name,
+                    required_tag_prefix=self.base_tag_slug + "__"
                 )
-                # Fallback: if no meaningful reuse found, widen search across all repositories
-                needed_pkgs = [l for l in all_layers if l.type in (LayerType.APT, LayerType.YUM)]
-                reused_pkg_count = len([name for name in reused_layer_names if any(l.name == name and l.type in (LayerType.APT, LayerType.YUM) for l in all_layers)])
-                if needed_pkgs and reused_pkg_count == 0:
-                    print("   🔁 No reusable APT/YUM layers found in same repo; widening search across repos...")
-                    base_image, reused_layer_names, layers_to_build, cleanup_commands = self.reuse_manager.find_optimal_base(
-                        all_layers,
-                        preferred_repo=None
-                    )
-                    parent_image = base_image
-                else:
-                    parent_image = base_image
+                parent_image = base_image
+                reused_base_tag = base_image if base_image != declaration.base_image else None
                 
                 print(f"📊 Reusing {len(reused_layer_names)} layers, building {len(layers_to_build)}")
                 packages_reused = len([name for name in reused_layer_names if any(l.name == name and l.type == LayerType.APT for l in all_layers)])
@@ -314,6 +283,8 @@ class BuildOrchestrator:
                 for pm_name in managers_needed:
                     pm = PM_REGISTRY.get(pm_name)
                     if pm and pm.needs_refresh and pm.refresh_cmd():
+                        if pm_name == 'apt' and getattr(declaration, 'apt_sources', []):
+                            planned_steps.append("script:apt_sources")
                         planned_steps.append(f"script:{pm.name}_refresh")
                 planned_steps.extend([f"{l.type.value}:{l.name}" for l in layers_to_build])
                 if planned_steps:
@@ -327,6 +298,17 @@ class BuildOrchestrator:
                     pm = PM_REGISTRY.get(pm_name)
                     if pm and pm.needs_refresh and pm_name not in pm_refresh_done:
                         print(f"🔄 Need to refresh {pm.name} metadata for continuing build...")
+                        # Write custom APT sources first if configured
+                        if pm_name == 'apt' and getattr(declaration, 'apt_sources', []):
+                            print("   Writing custom APT sources before refresh...")
+                            sources_cmd = self._render_apt_sources_commands(declaration.apt_sources)
+                            sources_layer = Layer(
+                                name="apt_sources",
+                                type=LayerType.SCRIPT,
+                                content=sources_cmd
+                            )
+                            image_tag = self._build_layer(sources_layer, parent_image, env_vars, declaration.image_name)
+                            parent_image = image_tag
                         cmd = pm.refresh_cmd()
                         if cmd:
                             refresh_layer = Layer(
@@ -342,73 +324,124 @@ class BuildOrchestrator:
             print(f"\n🔨 Building {len(layers_to_build)} new layers...")
             
             # Build all the layers we need
-            for i, layer in enumerate(layers_to_build):
-                print(f"\n📦 Building layer {i+1}/{len(layers_to_build)}: {layer.name}")
-                
-                # For the first package-manager layer when building from base, add metadata refresh
-                pm = pm_for_layer_type(layer.type)
-                if pm and parent_image == declaration.base_image and built_count == 0 and pm.needs_refresh and pm.refresh_cmd():
-                    print(f"   Adding {pm.name} metadata refresh before first {pm.name} package...")
-                    pm_update_layer = Layer(
-                        name=f"{pm.name}_update",
-                        type=LayerType.SCRIPT,
-                        content=pm.refresh_cmd()
-                    )
-                    image_tag = self._build_layer(pm_update_layer, parent_image, env_vars, declaration.image_name)
+            try:
+                for i, layer in enumerate(layers_to_build):
+                    print(f"\n📦 Building layer {i+1}/{len(layers_to_build)}: {layer.name}")
+                    
+                    # For the first package-manager layer when building from base, add metadata refresh
+                    pm = pm_for_layer_type(layer.type)
+                    if pm and parent_image == declaration.base_image and built_count == 0 and pm.needs_refresh and pm.refresh_cmd():
+                        print(f"   Adding {pm.name} metadata refresh before first {pm.name} package...")
+                        pm_update_layer = Layer(
+                            name=f"{pm.name}_update",
+                            type=LayerType.SCRIPT,
+                            content=pm.refresh_cmd()
+                        )
+                        image_tag = self._build_layer(pm_update_layer, parent_image, env_vars, declaration.image_name)
+                        parent_image = image_tag
+                        print(f"✓ Refreshed {pm.name} metadata")
+                    
+                    # Build the layer
+                    print(f"   Building layer {layer.name}...")
+                    image_tag = self._build_layer(layer, parent_image, env_vars, declaration.image_name)
+                    
+                    # Track layers actually built in this run
+                    built_layers.append(layer)
+
                     parent_image = image_tag
-                    print(f"✓ Refreshed {pm.name} metadata")
-                
-                # Build the layer
-                print(f"   Building layer {layer.name}...")
-                image_tag = self._build_layer(layer, parent_image, env_vars, declaration.image_name)
-                
-                # Cache the layer
-                print(f"   Caching layer {layer.name}...")
-                self.reuse_manager.cache_layer(layer, image_tag)
-                
-                # Track layers actually built in this run
-                built_layers.append(layer)
-                
-                # Cache this intermediate state with layers actually built in this run
-                print(f"   Caching intermediate state with {len(built_layers)} built layers...")
-                self.reuse_manager.cache_built_image(image_tag, built_layers.copy())
-                
-                parent_image = image_tag
-                built_count += 1
-                print(f"✓ Built layer {layer.name}: {image_tag}")
-                print(f"   Progress: {built_count}/{len(layers_to_build)} layers completed")
+                    built_count += 1
+                    print(f"✓ Built layer {layer.name}: {image_tag}")
+                    print(f"   Progress: {built_count}/{len(layers_to_build)} layers completed")
+
+                    # After each layer, embed cumulative dependency metadata for future reuse
+                    try:
+                        items: List[str] = []
+                        maintenance_names = {"apt_update", "yum_makecache"}
+                        for l in all_layers:
+                            if l.type == LayerType.BASE:
+                                continue
+                            if l in built_layers or l.name in reused_layer_names:
+                                if l.type in (LayerType.APT, LayerType.YUM, LayerType.PIP):
+                                    items.append(f"{l.type.value}:{l.content}")
+                                elif l.type == LayerType.SCRIPT:
+                                    if l.name in maintenance_names or l.name.endswith("_cleanup_remove"):
+                                        continue
+                                    items.append(f"script:{l.name}")
+                        if items:
+                            meta_tag = self._embed_dependency_metadata(parent_image, items)
+                            parent_image = meta_tag
+                            print(f"   Embedded metadata after layer {layer.name}")
+                    except Exception as me:
+                        print(f"⚠️  Failed to embed metadata after layer {layer.name}: {me}")
+            except Exception as e:
+                # On any failure, delete reused base (if any) and re-raise to abort
+                if 'reused_base_tag' in locals() and reused_base_tag:
+                    print(f"💥 Build failed. Removing reused base image: {reused_base_tag}")
+                    try:
+                        self._delete_image_safely(reused_base_tag)
+                    except Exception as de:
+                        print(f"⚠️  Failed to delete base image {reused_base_tag}: {de}")
+                raise
             
-            # Tag final image
+            # Tag final image (embed dependency metadata first)
             print(f"\n🏷️  Tagging final image...")
             final_image = parent_image
-            if final_image:
-                target_tag = f"{declaration.image_name}:{declaration.image_tag}"
-                print(f"   Final image: {final_image}")
-                print(f"   Target tag: {target_tag}")
-                
-                if final_image != target_tag:
-                    print(f"   Tagging {final_image} as {target_tag}")
-                    self._tag_image(final_image, target_tag)
-                else:
-                    print(f"   Image already has target tag")
-                
-                # Cache the layers actually present in the final image (built + reused)
-                used_layers: List[Layer] = []
-                reused_set = set(reused_layer_names)
+            try:
+                # Build list of used dependency identifiers (packages and scripts)
+                used_items: List[str] = []
+                maintenance_names = {"apt_update", "yum_makecache"}
                 for l in all_layers:
                     if l.type == LayerType.BASE:
                         continue
-                    if l in built_layers or l.name in reused_set:
-                        used_layers.append(l)
-                print(f"   Caching complete image with {len(used_layers)} used layers (built + reused)...")
-                self.reuse_manager.cache_built_image(target_tag, used_layers)
+                    # Include built + reused layers only
+                    if l in built_layers or l.name in reused_layer_names:
+                        if l.type in (LayerType.APT, LayerType.YUM, LayerType.PIP):
+                            used_items.append(f"{l.type.value}:{l.content}")
+                        elif l.type == LayerType.SCRIPT:
+                            # Skip maintenance/cleanup script markers in metadata
+                            if l.name in maintenance_names or l.name.endswith("_cleanup_remove"):
+                                continue
+                            used_items.append(f"script:{l.name}")
+
+                # Embed metadata into the image so detection can 'cat' it later
+                if used_items:
+                    print(f"   Embedding {len(used_items)} dependency items into image metadata file...")
+                    final_image = self._embed_dependency_metadata(final_image, used_items)
+                    print(f"   Metadata embedded at {IMAGE_DEP_METADATA_PATH}")
+                else:
+                    print(f"   No dependency items to embed")
+            except Exception as e:
+                print(f"⚠️  Failed to embed metadata into image: {e}")
+            else:
+                if final_image:
+                    # New naming: repo = baseNameSlug__image_name, tag = baseTagSlug__image_tag
+                    target_repo = self.repo_name
+                    target_tag = f"{self.base_tag_slug}__{declaration.image_tag}"
+                    target_ref = f"{target_repo}:{target_tag}"
+                    print(f"   Final image: {final_image}")
+                    print(f"   Target tag: {target_ref}")
+                    
+                    if final_image != target_ref:
+                        print(f"   Tagging {final_image} as {target_ref}")
+                        self._tag_image(final_image, target_ref)
+                    else:
+                        print(f"   Image already has target tag")
+
+                # Also tag classic name for backward compatibility with scripts/tests
+                classic_ref = f"{declaration.image_name}:{declaration.image_tag}"
+                if target_ref != classic_ref:
+                    try:
+                        print(f"   Adding classic tag: {classic_ref}")
+                        self._tag_image(target_ref, classic_ref)
+                    except Exception as e:
+                        print(f"⚠️  Failed to add classic tag: {e}")
                 
-                print(f"\n✅ Successfully built {target_tag}")
-                print(f"📊 Build stats: {built_count} built, {len(reused_layer_names) if not force_rebuild else 0} reused")
+                    print(f"\n✅ Successfully built {target_tag}")
+                    print(f"📊 Build stats: {built_count} built, {len(reused_layer_names) if not force_rebuild else 0} reused")
+                    
+                    return True
                 
-                return True
-            
-            return False
+                return False
             
         finally:
             # Cleanup work directory
@@ -419,6 +452,83 @@ class BuildOrchestrator:
                 print(f"   ✅ Work directory cleaned up")
             else:
                 print(f"   No work directory to clean up")
+
+    def _delete_image_safely(self, image_tag: str):
+        """Force delete a local Docker image tag if it exists."""
+        if not image_tag:
+            return
+        if not self._image_exists(image_tag):
+            return
+        cmd = sudo_prefix() + ['docker', 'rmi', '-f', image_tag]
+        print(f"   Removing image: {image_tag}")
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.strip() or f"Failed to remove image {image_tag}")
+
+    def _embed_dependency_metadata(self, base_image: str, items: List[str]) -> str:
+        """Create a tiny layer on top of base_image that writes dependency metadata to a fixed path.
+
+        Returns the new image tag with metadata embedded.
+        """
+        import shlex
+        # Prepare Dockerfile
+        meta_df = os.path.join(self.work_dir, "Dockerfile.meta")
+        lines = [f"FROM {base_image}"]
+        # Ensure directory exists and write all items atomically
+        # Use printf with proper quoting and overwrite the file
+        quoted_items = ' '.join(shlex.quote(s) for s in items)
+        write_cmd = (
+            f"mkdir -p $(dirname {IMAGE_DEP_METADATA_PATH}) && "
+            f"printf '%s\\n' {quoted_items} > {IMAGE_DEP_METADATA_PATH} && "
+            f"chmod 0644 {IMAGE_DEP_METADATA_PATH}"
+        )
+        lines.append(f"RUN {write_cmd}")
+        with open(meta_df, 'w') as f:
+            f.write('\n'.join(lines))
+
+        # Tag for the metadata layer; use a short hash of contents for uniqueness
+        import hashlib
+        content_hash = hashlib.sha256("\n".join(items).encode('utf-8')).hexdigest()[:12]
+        meta_tag = f"{self.repo_name}:{self.base_tag_slug}__meta-{content_hash}"
+
+        cmd = sudo_prefix() + [
+            'docker', 'build',
+            '-f', meta_df,
+            '-t', meta_tag,
+            self.work_dir
+        ]
+        print(f"   Building metadata layer: {' '.join(cmd)}")
+        result = subprocess.run(cmd, cwd=self.work_dir)
+        if result.returncode != 0:
+            raise RuntimeError("Failed to build metadata layer")
+        return meta_tag
+
+    def _format_layer_image_tag(self, layer: Layer, image_name: str) -> str:
+        """Format the image tag for a layer using naming scheme."""
+        name = self._slugify(layer.name)
+        ltype = self._slugify(layer.type.value)
+        return f"{self.repo_name}:{self.base_tag_slug}__layer-{ltype}-{name}-{layer.hash}"
+
+    @staticmethod
+    def _slugify(s: str) -> str:
+        return ''.join(c if c.isalnum() or c in ('-', '_') else '_' for c in s)
+
+    @staticmethod
+    def _parse_base_image(base_image: str) -> Tuple[str, str]:
+        """Parse base image into (name, tag) where name may include registry/user, tag may be empty.
+        We treat the last ':' after the last '/' as tag separator.
+        """
+        last_slash = base_image.rfind('/')
+        last_colon = base_image.rfind(':')
+        if last_colon > last_slash:
+            name = base_image[:last_colon]
+            tag = base_image[last_colon + 1:]
+        else:
+            name = base_image
+            tag = 'latest'
+        # Extract base repo name part (after last '/') for prefix human readability
+        base_repo = name.split('/')[-1]
+        return base_repo, tag
 
     # Note: Project code does not perform package presence checks; tests cover validation.
     
@@ -514,6 +624,10 @@ class BuildOrchestrator:
         # note: top-level pip_packages not supported; use heavy_setup or layers
 
         if has_apt_packages:
+            # If custom APT sources are configured, write them before apt update
+            if getattr(declaration, 'apt_sources', None):
+                sources_cmd = self._render_apt_sources_commands(declaration.apt_sources)
+                layers.append(Layer(name="apt_sources", type=LayerType.SCRIPT, content=sources_cmd))
             apt_pm = PM_REGISTRY['apt']
             if apt_pm.refresh_cmd():
                 layers.append(Layer(name="apt_update", type=LayerType.SCRIPT, content=apt_pm.refresh_cmd()))
@@ -603,6 +717,16 @@ class BuildOrchestrator:
                 layers.append(layer)
         
         return layers
+
+    def _render_apt_sources_commands(self, sources: List[str]) -> str:
+        """Render shell commands to write custom APT sources to /etc/apt/sources.list"""
+        import shlex
+        if not sources:
+            return ":"  # no-op
+        quoted = ' '.join(shlex.quote(s) for s in sources)
+        return (
+            f"printf '%s\\n' {quoted} > /etc/apt/sources.list && chmod 0644 /etc/apt/sources.list"
+        )
     
     def _build_layer(self, layer: Layer, parent_image: str, env_vars: Dict[str, str], image_name: str) -> str:
         """Build a single layer"""
@@ -615,7 +739,7 @@ class BuildOrchestrator:
         print(f"   Dockerfile generated: {dockerfile_path}")
         
         # Build image
-        image_tag = layer.get_image_tag(image_name)
+        image_tag = self._format_layer_image_tag(layer, image_name)
         print(f"   Target image: {image_tag}")
         
         cmd = sudo_prefix() + [
@@ -625,8 +749,9 @@ class BuildOrchestrator:
             self.work_dir
         ]
         
-        # For package-managed layers, add retry logic
-        max_retries = 3 if pm_for_layer_type(layer.type) is not None else 1
+        # Outer docker build retries: rely on inner RUN-level retry for package layers
+        # so we only run docker build once per layer to avoid 3x3 attempts.
+        max_retries = 1
         
         for attempt in range(max_retries):
             if max_retries > 1:
@@ -673,10 +798,22 @@ class BuildOrchestrator:
         if pm is not None:
             print(f"      {pm.name.upper()} package: {layer.content}")
             install_cmd = pm.install_cmd(layer.content)
+            # For APT, always refresh metadata right before install to avoid stale indexes
+            if pm.name == 'apt':
+                install_cmd = f"apt-get update && {install_cmd}"
+            # Robust retry: fail the build if all attempts fail, and verify install
+            verify_cmd = ""
+            if pm.name == 'apt':
+                verify_cmd = f"dpkg -s {layer.content} >/dev/null 2>&1"
+            elif pm.name == 'yum':
+                verify_cmd = f"rpm -q {layer.content} >/dev/null 2>&1 || yum list installed {layer.content} >/dev/null 2>&1"
+            elif pm.name == 'pip':
+                verify_cmd = f"python3 -m pip show {layer.content} >/dev/null 2>&1"
             retry_cmd = (
-                "RUN for i in {1..3}; do "
-                + install_cmd +
-                " && break || (echo \"Install attempt $i failed, retrying in 5 seconds...\" && sleep 5); done"
+                "RUN set -e; success=0; for i in 1 2 3; do "
+                + f"({install_cmd}) && success=1 && break || {{ echo 'Install attempt ' \"$i\" ' failed, retrying in 5 seconds...' >&2; sleep 5; }}; "
+                + "done; [ \"$success\" = 1 ] || { echo 'Install failed after 3 attempts' >&2; exit 1; }; "
+                + (f"{verify_cmd} || {{ echo 'Post-install verification failed' >&2; exit 1; }}" if verify_cmd else "")
             )
             lines.append(retry_cmd)
         elif layer.type == LayerType.SCRIPT:
@@ -811,14 +948,6 @@ class BuildOrchestrator:
             }
         }
         
-        # Add layer cache stats if in layered mode
-        if self.layer_cache:
-            layer_stats = {
-                "total_layers": len(self.layer_cache.get("layers", {})),
-                "total_chains": len(self.layer_cache.get("layer_chains", {}))
-            }
-            status["layer_cache"] = layer_stats
-        
         return status
     
     def clean_cache(self, max_age_days: int = 30) -> bool:
@@ -828,34 +957,5 @@ class BuildOrchestrator:
         # Clean build tracker cache
         self.tracker.clean_old_entries(max_age_days)
         
-        # Clean layer cache if exists
-        if self.layer_cache:
-            self._clean_layer_cache(max_age_days)
-        
         print("✅ Cache cleaned")
         return True
-    
-    def _clean_layer_cache(self, max_age_days: int):
-        """Clean old layer cache entries"""
-        cutoff = datetime.now() - timedelta(days=max_age_days)
-        
-        # Find layers to remove
-        to_remove = []
-        for key, layer in self.layer_cache.get("layers", {}).items():
-            created = datetime.fromisoformat(layer["created"])
-            if created < cutoff:
-                to_remove.append(key)
-        
-        # Remove old layers
-        for key in to_remove:
-            layer = self.layer_cache["layers"][key]
-            # Try to remove Docker image
-            if self._image_exists(layer["image"]):
-                cmd = sudo_prefix() + ['docker', 'rmi', layer["image"]]
-                subprocess.run(cmd, capture_output=True)
-            
-            del self.layer_cache["layers"][key]
-        
-        if to_remove:
-            self._save_layer_cache()
-            print(f"  Removed {len(to_remove)} old layers")
