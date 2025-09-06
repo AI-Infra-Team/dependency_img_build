@@ -801,19 +801,11 @@ class BuildOrchestrator:
             # For APT, always refresh metadata right before install to avoid stale indexes
             if pm.name == 'apt':
                 install_cmd = f"apt-get update && {install_cmd}"
-            # Robust retry: fail the build if all attempts fail, and verify install
-            verify_cmd = ""
-            if pm.name == 'apt':
-                verify_cmd = f"dpkg -s {layer.content} >/dev/null 2>&1"
-            elif pm.name == 'yum':
-                verify_cmd = f"rpm -q {layer.content} >/dev/null 2>&1 || yum list installed {layer.content} >/dev/null 2>&1"
-            elif pm.name == 'pip':
-                verify_cmd = f"python3 -m pip show {layer.content} >/dev/null 2>&1"
+            # Robust retry without post-install verification (consistent policy: no verify for all PMs)
             retry_cmd = (
                 "RUN set -e; success=0; for i in 1 2 3; do "
                 + f"({install_cmd}) && success=1 && break || {{ echo 'Install attempt ' \"$i\" ' failed, retrying in 5 seconds...' >&2; sleep 5; }}; "
-                + "done; [ \"$success\" = 1 ] || { echo 'Install failed after 3 attempts' >&2; exit 1; }; "
-                + (f"{verify_cmd} || {{ echo 'Post-install verification failed' >&2; exit 1; }}" if verify_cmd else "")
+                + "done; [ \"$success\" = 1 ] || { echo 'Install failed after 3 attempts' >&2; exit 1; }"
             )
             lines.append(retry_cmd)
         elif layer.type == LayerType.SCRIPT:

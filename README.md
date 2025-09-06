@@ -1,94 +1,46 @@
-# Dynamic Docker Build System
+# Mooncake Test Image: Build & Run (Simple)
 
-A Python-based system for building Docker images with dynamic Dockerfiles and multi-level caching (GHCR, local-area-net MinIO).
-通过统一描述依赖项和阶段描述来支持动态构造dockerfile进行安装，并遵循依赖顺序
-同时会记录下每一次的安装顺序，有靠前变更，会将变更追加到后面避免全量重构
-以上思路可以使高频变更项统一被排到后面，避免镜像的反复重构
-如果变更的不是最后一个stage。整个stage都会被迁移到后面
+将镜像构建与运行统一为一个脚本，直接使用 `scripts/start_test_mooncake_server.py` 完成镜像构建并启动容器（无需再使用本目录下的动态构建工具）。
 
-## Features
+## 快速开始
 
-- **Dynamic Dockerfile Generation**: Users declare what they need, system generates optimized Dockerfiles
-- **Multi-level Caching**: Local, MinIO, and GitHub Container Registry (GHCR) cache support  
-- **Smart Rebuild Detection**: Only rebuilds changed steps and subsequent ones
-- **Stage Dependencies**: Define installation stages with dependency ordering
-- **Cache Efficiency Tracking**: Monitor cache hit rates and build optimization
+- 先决条件：
+  - 已安装 Docker
+  - Python 3.8+ 与 pip（脚本会自动安装 `pyscript-util`）
 
-## Quick Start
+- 一条命令构建并启动：
+  ```bash
+  python3 scripts/start_test_mooncake_server.py
+  ```
 
-1. **Install dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
+脚本将自动：
+- 在项目根目录下定位并调用 `scripts/build_dev_container_img.py` 构建镜像 `unify-kvcache-dev:latest`
+- 以容器名 `mooncake_test_server` 启动容器，并挂载项目到容器 `/app`
+- 暴露端口：`8085:8083`、`8086:8080`、`50056:50051`
+- 设置环境变量 `HOST_IP`（自动探测）
 
-2. **Create example configuration**:
-   ```bash
-   python cli.py init
-   ```
+## 常用操作
 
-3. **Build your image**:
-   ```bash
-   python cli.py build -c build-config.json
-   ```
+- 查看日志：
+  ```bash
+  docker logs -f mooncake_test_server
+  ```
 
-## Configuration Format
+- 停止容器：
+  ```bash
+  docker stop mooncake_test_server
+  ```
 
-Create a JSON or YAML file describing your build requirements:
+- 仅构建镜像（不启动容器）：
+  ```bash
+  python3 scripts/build_dev_container_img.py
+  ```
 
-```json
-{
-  "user": "app",
-  "sudo": true,
-  "apt_packages": ["curl", "git", "python3"],
-  "yum_packages": [],
-  "env_scripts": ["pip3 install --upgrade pip"],
-  "stages": [
-    {
-      "name": "dependencies", 
-      "dependencies": [],
-      "commands": ["pip3 install requests flask"]
-    },
-    {
-      "name": "application",
-      "dependencies": ["dependencies"], 
-      "commands": ["mkdir -p /app", "cp . /app"]
-    }
-  ]
-}
-```
+- 调整端口/行为：
+  - 端口映射在 `scripts/start_test_mooncake_server.py` 中定义，可按需修改
+  - 容器内入口脚本为：`/app/scripts/start_test_mooncake_server/entrypoint.py`
 
-## CLI Commands
+## 说明
 
-- `build -c CONFIG`: Build Docker image using configuration file
-- `status [-c CONFIG]`: Show build status and cache efficiency
-- `clean [--max-age DAYS]`: Clean old cache entries
-- `init [-o OUTPUT]`: Create example configuration
-
-## Cache Configuration
-
-Configure caching via environment variables or config file:
-
-```bash
-export CACHE_LOCAL_PATH=/tmp/docker-cache
-export MINIO_ENDPOINT=minio.example.com:9000
-export MINIO_BUCKET=docker-cache
-export GHCR_NAMESPACE=myorg
-```
-
-## How It Works
-
-1. **Parse Configuration**: Validates user declaration and resolves stage dependencies
-2. **Generate Build Plan**: Creates build steps with content hashes for cache keys
-3. **Analyze Changes**: Compares with previous builds to determine what needs rebuilding
-4. **Execute Build**: Generates optimized Dockerfile and runs Docker build
-5. **Update Cache**: Records successful builds and promotes cache entries
-
-## Architecture
-
-- `config.py`: Data structures and configuration
-- `parser.py`: Configuration parsing and validation  
-- `dockerfile_generator.py`: Dynamic Dockerfile generation
-- `build_tracker.py`: Build history and change detection
-- `cache_manager.py`: Multi-level cache backends
-- `build_orchestrator.py`: Main build coordination
-- `cli.py`: Command-line interface
+- 旧的“动态 Docker 构建系统”（本目录）已不再建议使用；如仅需本项目测试环境与依赖，推荐直接使用上述脚本
+- 如需高度自定义的分阶段/依赖驱动构建流程，可参考历史版本或自行扩展，但默认路径已切换为 `start_test_mooncake_server.py`
