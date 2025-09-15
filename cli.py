@@ -8,7 +8,11 @@ import logging
 from typing import Dict, Any
 
 from config import CacheConfig
+import yaml
 from build_orchestrator import BuildOrchestrator
+from utils import sudo_prefix as _sudo_prefix
+import shutil
+import subprocess
 
 
 def load_cache_config(config_path: str = None) -> CacheConfig:
@@ -52,6 +56,33 @@ def cmd_build(args):
     print(f"   Configuration: {args.config}")
     print(f"   Force rebuild: {args.force_rebuild}")
     
+    # Preflight: verify Docker daemon is accessible either directly or via sudo
+    def _check_docker_access() -> bool:
+        # Try without sudo first
+        try:
+            if shutil.which('docker'):
+                r = subprocess.run(['docker', 'info'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+                if r.returncode == 0:
+                    return True
+        except Exception:
+            pass
+        # Try with sudo if available and permitted
+        try:
+            if shutil.which('sudo'):
+                r = subprocess.run(['sudo', '-n', 'docker', 'info'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+                if r.returncode == 0:
+                    return True
+        except Exception:
+            pass
+        return False
+
+    if not _check_docker_access():
+        print("❌ Docker daemon is not accessible.")
+        print("   - Tried: 'docker info' and 'sudo -n docker info'")
+        print("   - Hints: add your user to the 'docker' group, or run with sudo where permitted.")
+        print("   - In restricted sandboxes, sudo may be blocked (nnp). Set NO_SUDO=1 to suppress sudo attempts.")
+        return 1
+    
     # Load cache configuration
     print(f"   Loading cache configuration...")
     cache_config = load_cache_config(args.cache_config)
@@ -60,11 +91,94 @@ def cmd_build(args):
     # Initialize orchestrator
     print(f"   Initializing build orchestrator...")
     orchestrator = BuildOrchestrator(cache_config)
+    # Provide config_dir to orchestrator for resolving file: paths and copies
+    try:
+        orchestrator.config_dir = os.path.dirname(os.path.abspath(args.config))
+    except Exception:
+        pass
     
     if not os.path.exists(args.config):
         print(f"❌ Error: Configuration file '{args.config}' not found")
         return 1
     
+    # Pre-compute dependency checksum from config and short-circuit if unchanged
+    def _load_config_dict(path: str):
+        if path.lower().endswith((".yml", ".yaml")) and yaml is not None:
+            with open(path, 'r', encoding='utf-8') as f:
+                return yaml.safe_load(f)
+        with open(path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+
+    def _collect_dep_items(cfg: Dict[str, Any]) -> list:
+        """Collect dependency-significant items for checksum.
+
+        - For pip/apt/yum: use package names only
+        - For script installs: use script name only (ignore commands/file/copies)
+        - Include base_image to force rebuild when base changes
+        - Also respect future 'layers' structure if present
+        """
+        items = []
+        # base image
+        base_image = cfg.get('base_image')
+        if base_image:
+            items.append(f"base:{base_image}")
+
+        # top-level packages (legacy compatibility)
+        for field, prefix in (("apt_packages", "apt"), ("yum_packages", "yum"), ("pip_packages", "pip")):
+            for pkg in cfg.get(field, []) or []:
+                items.append(f"{prefix}:{pkg}")
+
+        heavy = cfg.get('heavy_setup', {}) or {}
+        for field, prefix in (("apt_packages", "apt"), ("yum_packages", "yum"), ("pip_packages", "pip")):
+            for pkg in heavy.get(field, []) or []:
+                items.append(f"{prefix}:{pkg}")
+        for inst in heavy.get('script_installs', []) or []:
+            name = (inst or {}).get('name')
+            if name:
+                items.append(f"script:{name}")
+
+        # layers (future format)
+        layers = cfg.get('layers', {}) or {}
+        for pkg in layers.get('apt', []) or []:
+            items.append(f"apt:{pkg}")
+        for pkg in layers.get('yum', []) or []:
+            items.append(f"yum:{pkg}")
+        for sc in layers.get('scripts', []) or []:
+            nm = (sc or {}).get('name')
+            if nm:
+                items.append(f"script:{nm}")
+
+        # Normalize ordering & uniqueness
+        items = sorted(set(items))
+        return items
+
+    cfg = _load_config_dict(args.config)
+    if not isinstance(cfg, dict):
+        print("❌ Error: config must be a mapping")
+        return 1
+    dep_items = _collect_dep_items(cfg)
+    print(f"   Dependency items: {len(dep_items)} -> {', '.join(dep_items[:8])}{'...' if len(dep_items) > 8 else ''}")
+    import hashlib
+    dep_checksum = hashlib.sha256("\n".join(dep_items).encode('utf-8')).hexdigest()
+    image_name = cfg.get('image_name', 'image')
+    image_tag = cfg.get('image_tag', 'latest')
+    checksum_filename = f"img_dependency_{image_name}_{image_tag}.checksum"
+
+    # If checksum file exists and matches, and not forcing rebuild, skip build
+    try:
+        if (not args.force_rebuild) and os.path.exists(checksum_filename):
+            old = open(checksum_filename, 'r', encoding='utf-8').read().strip()
+            if old == dep_checksum:
+                print(f"\n✅ No dependency changes detected (checksum match). Skipping build.")
+                print(f"   Checksum: {dep_checksum}")
+                return 0
+            else:
+                print(f"\nℹ️ Dependency changed, rebuilding image")
+                print(f"   Old: {old}")
+                print(f"   New: {dep_checksum}")
+    except Exception as e:
+        print(f"⚠️ Could not read previous checksum: {e}")
+
     # Build the image
     print(f"\n📦 Building image from {args.config}...")
     success = orchestrator.build_image(
@@ -74,6 +188,15 @@ def cmd_build(args):
     
     if success:
         print(f"\n🎉 Build completed successfully!")
+
+        # Write dependency checksum file (we already computed it earlier)
+        try:
+            with open(checksum_filename, 'w', encoding='utf-8') as f:
+                f.write(dep_checksum + "\n")
+            print(f"📝 Dependency checksum written: {checksum_filename} -> {dep_checksum}")
+        except Exception as e:
+            print(f"⚠️ Failed to create dependency checksum: {e}")
+
         return 0
     else:
         print(f"\n💥 Build failed!")

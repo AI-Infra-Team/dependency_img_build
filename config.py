@@ -4,7 +4,16 @@ from enum import Enum
 import hashlib
 
 # Fixed path inside images to store dependency metadata for detection
+# (legacy; no longer written in new builds — kept for backward compatibility reads)
 IMAGE_DEP_METADATA_PATH = "/opt/dependency_img_build/dependencies.list"
+
+# Image label keys for dependency metadata (preferred, faster, no filesystem writes)
+IMAGE_LABEL_NS = "io.teleinfra.imgdeps"
+IMAGE_LABEL_VERSION = f"{IMAGE_LABEL_NS}.version"
+IMAGE_LABEL_CACHE_KEY = f"{IMAGE_LABEL_NS}.cache_key"
+IMAGE_LABEL_CREATED = f"{IMAGE_LABEL_NS}.created"
+IMAGE_LABEL_ITEMS = f"{IMAGE_LABEL_NS}.items"          # optional JSON array (may be large)
+IMAGE_LABEL_ITEMS_B64 = f"{IMAGE_LABEL_NS}.items_b64"  # base64(JSON array), preferred for safety
 
 
 class CacheLevel(Enum):
@@ -71,6 +80,8 @@ class ScriptInstall:
     dependencies: List[str] = None
     commands: List[str] = None
     remove_commands: List[str] = None  # Commands to safely remove this script's effects
+    file: str = None  # Optional path to a script file (relative to config file dir)
+    copies: List[str] = None  # Optional list of "src:dst" copy mappings (src relative to config file dir)
     
     def __post_init__(self):
         if self.dependencies is None:
@@ -79,6 +90,8 @@ class ScriptInstall:
             self.commands = []
         if self.remove_commands is None:
             self.remove_commands = []
+        if self.copies is None:
+            self.copies = []
 
 
 @dataclass

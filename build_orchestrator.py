@@ -8,12 +8,13 @@ import concurrent.futures
 from typing import List, Optional, Dict, Tuple, Set
 from datetime import datetime, timedelta
 from pathlib import Path
-from config import UserDeclaration, CacheConfig, CacheLevel, Layer, LayerType, IMAGE_DEP_METADATA_PATH
+from config import UserDeclaration, CacheConfig, CacheLevel, Layer, LayerType
 from parser import DeclarationParser
 from dockerfile_generator import DockerfileGenerator
 from build_tracker import BuildTracker
 from cache_manager import CacheManager
 from env_manager import EnvironmentManager, EnvVarConfig
+from container_layer_builder import ContainerLayerBuilder
 from reuse import LayerReuseManager
 
 # Package manager implementations
@@ -133,12 +134,16 @@ class BuildOrchestrator:
         
         # Work directory for Dockerfiles
         self.work_dir = None
+        # Keep original script install definitions (to access copies/file later)
+        self._script_install_defs = {}
     
     # Legacy layer cache removed; rely on in-image metadata only
     
     def build_image(self, config_file: str, force_rebuild: bool = False) -> bool:
         """Build Docker image from configuration file"""
+        build_succeeded = False
         try:
+            self.config_dir = os.path.dirname(os.path.abspath(config_file))
             # Parse user declaration
             declaration = self._parse_config(config_file)
             if not self.parser.validate_declaration(declaration):
@@ -157,6 +162,7 @@ class BuildOrchestrator:
         
         # Create work directory
         self.work_dir = tempfile.mkdtemp(prefix="docker_layer_")
+        build_succeeded = False
         
         try:
             # Parse all layers from configuration
@@ -323,6 +329,9 @@ class BuildOrchestrator:
             
             print(f"\n🔨 Building {len(layers_to_build)} new layers...")
             
+            # Initialize container-based builder (no Dockerfiles)
+            self._container_builder = ContainerLayerBuilder(env_vars, config_dir=getattr(self, 'config_dir', os.getcwd()), preserve_on_failure=True)
+
             # Build all the layers we need
             try:
                 for i, layer in enumerate(layers_to_build):
@@ -341,9 +350,59 @@ class BuildOrchestrator:
                         parent_image = image_tag
                         print(f"✓ Refreshed {pm.name} metadata")
                     
-                    # Build the layer
-                    print(f"   Building layer {layer.name}...")
-                    image_tag = self._build_layer(layer, parent_image, env_vars, declaration.image_name)
+                    # Build the layer via running container + snapshot commit
+                    print(f"   Building layer {layer.name} (container commit mode)...")
+                    # Resolve extra copies for script installs, if any
+                    extra_copies: List[str] = []
+                    try:
+                        if hasattr(self, '_script_install_defs') and layer.type == LayerType.SCRIPT:
+                            meta = self._script_install_defs.get(layer.name)
+                            if meta and getattr(meta, 'copies', None):
+                                extra_copies = list(meta.copies)
+                    except Exception:
+                        pass
+
+                    # Build dependency metadata items up to this point (built + reused)
+                    dep_items: List[str] = []
+                    try:
+                        maintenance_names = {"apt_update", "yum_makecache"}
+                        for l in all_layers:
+                            if l.type == LayerType.BASE:
+                                continue
+                            if l in built_layers or l.name in reused_layer_names:
+                                if l.type in (LayerType.APT, LayerType.YUM, LayerType.PIP):
+                                    dep_items.append(f"{l.type.value}:{l.content}")
+                                elif l.type == LayerType.SCRIPT:
+                                    if l.name in maintenance_names or l.name.endswith("_cleanup_remove"):
+                                        continue
+                                    dep_items.append(f"script:{l.name}")
+                    except Exception:
+                        dep_items = []
+
+                    # Commit layer
+                    target_image_tag = self._format_layer_image_tag(layer, declaration.image_name)
+                    try:
+                        image_tag = self._container_builder.build_layer(
+                            layer,
+                            parent_image,
+                            target_image_tag,
+                            copies=extra_copies,
+                            metadata_items=dep_items
+                        )
+                    except Exception as be:
+                        # Print manual reproduction hints
+                        cname = getattr(self._container_builder, 'last_container_name', None)
+                        cid = getattr(self._container_builder, 'last_container_id', None)
+                        fcmd = getattr(self._container_builder, 'last_failed_cmd', None)
+                        ref = cname or cid or '<unknown>'
+                        print("\n🧯 Reproduce locally:")
+                        print(f"  1) Start container: sudo -E docker start {ref}")
+                        print(f"  2) Shell inside:   sudo -E docker exec -it {ref} /bin/bash")
+                        if fcmd:
+                            print(f"  3) Re-run failed:  sudo -E docker exec -it {ref} /bin/bash -lc {json.dumps(fcmd)}")
+                        print(f"  4) Commit debug:   sudo -E docker commit {ref} debug/{self.repo_name.replace(':','_')}_{layer.name}_failed")
+                        print(f"  5) Inspect labels: sudo -E docker image inspect debug/{self.repo_name.replace(':','_')}_{layer.name}_failed --format '{{{{json .Config.Labels}}}}' ")
+                        raise
                     
                     # Track layers actually built in this run
                     built_layers.append(layer)
@@ -353,26 +412,7 @@ class BuildOrchestrator:
                     print(f"✓ Built layer {layer.name}: {image_tag}")
                     print(f"   Progress: {built_count}/{len(layers_to_build)} layers completed")
 
-                    # After each layer, embed cumulative dependency metadata for future reuse
-                    try:
-                        items: List[str] = []
-                        maintenance_names = {"apt_update", "yum_makecache"}
-                        for l in all_layers:
-                            if l.type == LayerType.BASE:
-                                continue
-                            if l in built_layers or l.name in reused_layer_names:
-                                if l.type in (LayerType.APT, LayerType.YUM, LayerType.PIP):
-                                    items.append(f"{l.type.value}:{l.content}")
-                                elif l.type == LayerType.SCRIPT:
-                                    if l.name in maintenance_names or l.name.endswith("_cleanup_remove"):
-                                        continue
-                                    items.append(f"script:{l.name}")
-                        if items:
-                            meta_tag = self._embed_dependency_metadata(parent_image, items)
-                            parent_image = meta_tag
-                            print(f"   Embedded metadata after layer {layer.name}")
-                    except Exception as me:
-                        print(f"⚠️  Failed to embed metadata after layer {layer.name}: {me}")
+                    # Metadata already written inside the container before commit
             except Exception as e:
                 # On any failure, delete reused base (if any) and re-raise to abort
                 if 'reused_base_tag' in locals() and reused_base_tag:
@@ -403,11 +443,11 @@ class BuildOrchestrator:
                                 continue
                             used_items.append(f"script:{l.name}")
 
-                # Embed metadata into the image so detection can 'cat' it later
+                # Embed metadata into the image via labels (no filesystem writes)
                 if used_items:
-                    print(f"   Embedding {len(used_items)} dependency items into image metadata file...")
+                    print(f"   Embedding {len(used_items)} dependency items into image labels...")
                     final_image = self._embed_dependency_metadata(final_image, used_items)
-                    print(f"   Metadata embedded at {IMAGE_DEP_METADATA_PATH}")
+                    print(f"   Metadata labels embedded")
                 else:
                     print(f"   No dependency items to embed")
             except Exception as e:
@@ -438,20 +478,24 @@ class BuildOrchestrator:
                 
                     print(f"\n✅ Successfully built {target_tag}")
                     print(f"📊 Build stats: {built_count} built, {len(reused_layer_names) if not force_rebuild else 0} reused")
-                    
+                    build_succeeded = True
                     return True
                 
                 return False
             
         finally:
-            # Cleanup work directory
-            print(f"🧹 Cleaning up work directory...")
-            if self.work_dir and os.path.exists(self.work_dir):
-                print(f"   Removing: {self.work_dir}")
-                shutil.rmtree(self.work_dir)
-                print(f"   ✅ Work directory cleaned up")
+            # Cleanup work directory only on success; keep on failure for debugging
+            if build_succeeded:
+                print(f"🧹 Cleaning up work directory...")
+                if self.work_dir and os.path.exists(self.work_dir):
+                    print(f"   Removing: {self.work_dir}")
+                    shutil.rmtree(self.work_dir)
+                    print(f"   ✅ Work directory cleaned up")
+                else:
+                    print(f"   No work directory to clean up")
             else:
-                print(f"   No work directory to clean up")
+                if self.work_dir and os.path.exists(self.work_dir):
+                    print(f"🐞 Build failed; preserving work directory for debugging: {self.work_dir}")
 
     def _delete_image_safely(self, image_tag: str):
         """Force delete a local Docker image tag if it exists."""
@@ -466,42 +510,20 @@ class BuildOrchestrator:
             raise RuntimeError(result.stderr.strip() or f"Failed to remove image {image_tag}")
 
     def _embed_dependency_metadata(self, base_image: str, items: List[str]) -> str:
-        """Create a tiny layer on top of base_image that writes dependency metadata to a fixed path.
+        """Create a tiny layer on top of base_image with dependency labels only, then commit.
 
-        Returns the new image tag with metadata embedded.
+        Returns the new image tag with metadata labels embedded.
         """
-        import shlex
-        # Prepare Dockerfile
-        meta_df = os.path.join(self.work_dir, "Dockerfile.meta")
-        lines = [f"FROM {base_image}"]
-        # Ensure directory exists and write all items atomically
-        # Use printf with proper quoting and overwrite the file
-        quoted_items = ' '.join(shlex.quote(s) for s in items)
-        write_cmd = (
-            f"mkdir -p $(dirname {IMAGE_DEP_METADATA_PATH}) && "
-            f"printf '%s\\n' {quoted_items} > {IMAGE_DEP_METADATA_PATH} && "
-            f"chmod 0644 {IMAGE_DEP_METADATA_PATH}"
-        )
-        lines.append(f"RUN {write_cmd}")
-        with open(meta_df, 'w') as f:
-            f.write('\n'.join(lines))
-
-        # Tag for the metadata layer; use a short hash of contents for uniqueness
         import hashlib
         content_hash = hashlib.sha256("\n".join(items).encode('utf-8')).hexdigest()[:12]
         meta_tag = f"{self.repo_name}:{self.base_tag_slug}__meta-{content_hash}"
-
-        cmd = sudo_prefix() + [
-            'docker', 'build',
-            '-f', meta_df,
-            '-t', meta_tag,
-            self.work_dir
-        ]
-        print(f"   Building metadata layer: {' '.join(cmd)}")
-        result = subprocess.run(cmd, cwd=self.work_dir)
-        if result.returncode != 0:
-            raise RuntimeError("Failed to build metadata layer")
-        return meta_tag
+        # Use container builder to commit labels without changing filesystem
+        builder = getattr(self, '_container_builder', None)
+        if builder is None:
+            builder = ContainerLayerBuilder({}, config_dir=getattr(self, 'config_dir', os.getcwd()), preserve_on_failure=True)
+        dummy_layer = Layer(name=f"meta_{content_hash}", type=LayerType.SCRIPT, content=":")
+        print(f"   Embedding dependency metadata labels via container commit: {meta_tag}")
+        return builder.build_layer(dummy_layer, base_image, meta_tag, copies=None, metadata_items=items)
 
     def _format_layer_image_tag(self, layer: Layer, image_name: str) -> str:
         """Format the image tag for a layer using naming scheme."""
@@ -652,11 +674,21 @@ class BuildOrchestrator:
             # Parse script installs from heavy_setup
             if declaration.heavy_setup.script_installs:
                 for script in declaration.heavy_setup.script_installs:
+                    # commands 与 file 二选一；若提供 file 则将其编码为单行命令 'file:<path>'
+                    if getattr(script, 'file', None):
+                        content = f"file:{script.file}"
+                    else:
+                        content = '\n'.join(script.commands)
                     layer = Layer(
                         name=script.name,
                         type=LayerType.SCRIPT,
-                        content='\n'.join(script.commands)
+                        content=content
                     )
+                    # Store original definition for container builder (copies, file, etc.)
+                    try:
+                        self._script_install_defs[script.name] = script
+                    except Exception:
+                        pass
                     layers.append(layer)
             # Parse PIP packages from heavy_setup
             if getattr(declaration.heavy_setup, 'pip_packages', []):
@@ -760,8 +792,11 @@ class BuildOrchestrator:
             print(f"   Running command: {' '.join(cmd)}")
             print(f"   Starting Docker build (real-time output)...")
             
-            # Run without capturing output so it shows in real time
-            result = subprocess.run(cmd, cwd=self.work_dir)
+            # Run without capturing output so it shows in real time; enable BuildKit
+            env = os.environ.copy()
+            env.setdefault('DOCKER_BUILDKIT', '1')
+            env.setdefault('BUILDKIT_PROGRESS', 'plain')
+            result = subprocess.run(cmd, cwd=self.work_dir, env=env)
             
             if result.returncode == 0:
                 print(f"✅ Successfully built layer {layer.name}")
@@ -787,11 +822,17 @@ class BuildOrchestrator:
         
         lines = [f"FROM {parent_image}"]
         
-        # Add environment variables
+        # Add environment variables (escaped and grouped)
         if env_vars:
             print(f"      Adding {len(env_vars)} environment variables")
-            for key, value in env_vars.items():
-                lines.append(f"ENV {key}=\"{value}\"")
+            try:
+                from env_manager import EnvironmentManager
+                env_lines = EnvironmentManager().generate_env_dockerfile_lines(env_vars)
+                lines.extend(env_lines)
+            except Exception:
+                # Fallback to simple injection if helper fails
+                for key, value in env_vars.items():
+                    lines.append(f"ENV {key}=\"{value}\"")
         
         # Generate RUN command based on layer type
         pm = pm_for_layer_type(layer.type)
@@ -809,19 +850,49 @@ class BuildOrchestrator:
             )
             lines.append(retry_cmd)
         elif layer.type == LayerType.SCRIPT:
-            print(f"      Script commands: {len(layer.content.split(chr(10)))} lines")
-            commands = layer.content.split('\n')
-            if len(commands) == 1:
-                lines.append(f"RUN {commands[0]}")
-            else:
-                lines.append(f"RUN {' && '.join(commands)}")
+            # Support file:relative/path syntax to run external scripts reliably
+            commands = [ln for ln in layer.content.splitlines() if ln.strip()]
+            print(f"      Script commands: {len(commands)} lines")
+            # Accumulate inline shell commands to be joined; emit COPY/RUN for file: entries
+            inline_cmds = []
+            for raw in commands:
+                cmd = raw.strip()
+                if cmd.startswith('file:'):
+                    rel = cmd.split(':', 1)[1].strip()
+                    base = os.path.basename(rel)
+                    cfg_dir = getattr(self, 'config_dir', os.getcwd())
+                    src_abs = os.path.abspath(os.path.join(cfg_dir, rel))
+                    dst_ctx = os.path.join(self.work_dir, base)
+                    try:
+                        # Copy into build context
+                        import shutil
+                        shutil.copy2(src_abs, dst_ctx)
+                        print(f"      Added script to context: {rel} -> {dst_ctx}")
+                    except Exception as e:
+                        print(f"      ⚠️ Failed to copy script {rel} to context: {e}")
+                        raise
+                    dst_image = f"/dependency_img_build/{base}"
+                    lines.append("RUN mkdir -p /dependency_img_build")
+                    lines.append(f"COPY {base} {dst_image}")
+                    lines.append(f"RUN chmod +x {dst_image}")
+                    if base.endswith('.py'):
+                        lines.append(f"RUN set -e; python3 {dst_image}")
+                    else:
+                        lines.append(f"RUN set -e; /bin/bash {dst_image}")
+                else:
+                    inline_cmds.append(cmd)
+            if inline_cmds:
+                if len(inline_cmds) == 1:
+                    lines.append(f"RUN set -e; {inline_cmds[0]}")
+                else:
+                    lines.append(f"RUN set -e; {' && '.join(inline_cmds)}")
         elif layer.type == LayerType.CONFIG:
-            print(f"      Config commands: {len(layer.content.split(chr(10)))} lines")
-            commands = layer.content.split('\n')
+            commands = [ln for ln in layer.content.splitlines() if ln.strip()]
+            print(f"      Config commands: {len(commands)} lines")
             if len(commands) == 1:
-                lines.append(f"RUN {commands[0]}")
-            else:
-                lines.append(f"RUN {' && '.join(commands)}")
+                lines.append(f"RUN set -e; {commands[0]}")
+            elif commands:
+                lines.append(f"RUN set -e; {' && '.join(commands)}")
         
         # Add metadata
         lines.append(f"LABEL layer.name=\"{layer.name}\"")
@@ -905,6 +976,12 @@ class BuildOrchestrator:
             dockerfile_path = f.name
         
         try:
+            # Pass context info to generator so it can resolve file: paths relative to config file
+            try:
+                self.generator.config_dir = getattr(self, 'config_dir', os.getcwd())
+                self.generator.build_context_dir = os.getcwd()
+            except Exception:
+                pass
             # Execute Docker build
             cmd = sudo_prefix() + [
                 'docker', 'build',
@@ -914,13 +991,17 @@ class BuildOrchestrator:
             ]
             
             print(f"🐋 Building image: {image_tag}")
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            # Stream Docker build output in real time (do not capture), enable BuildKit
+            env = os.environ.copy()
+            env.setdefault('DOCKER_BUILDKIT', '1')
+            env.setdefault('BUILDKIT_PROGRESS', 'plain')
+            result = subprocess.run(cmd, env=env)
             
             if result.returncode == 0:
                 print(f"✅ Successfully built: {image_tag}")
                 return True
             else:
-                print(f"❌ Build failed:\n{result.stderr}")
+                print(f"❌ Build failed (see logs above)")
                 return False
                 
         finally:

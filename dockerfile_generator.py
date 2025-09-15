@@ -8,6 +8,9 @@ from env_manager import EnvironmentManager, EnvVarConfig
 class DockerfileGenerator:
     def __init__(self, base_image: str = "ubuntu:22.04"):
         self.base_image = base_image
+        # For resolving file: paths relative to config file and context
+        self.config_dir = os.getcwd()
+        self.build_context_dir = os.getcwd()
     
     def generate(self, declaration: UserDeclaration, stage_order: List[str], rebuild_from_step: int = 0) -> str:
         """Generate Dockerfile content based on user declaration"""
@@ -190,7 +193,22 @@ class DockerfileGenerator:
         if declaration.env_scripts:
             lines.append("# Environment setup scripts")
             for script in declaration.env_scripts:
-                lines.append(f"RUN echo \"DEBUG: http_proxy=$http_proxy https_proxy=$https_proxy\" && {script}")
+                cmd = script.strip()
+                if cmd.startswith("file:"):
+                    rel = cmd.split(":",1)[1].strip()
+                    base = os.path.basename(rel)
+                    abs_src = os.path.abspath(os.path.join(self.config_dir, rel))
+                    copy_src = os.path.relpath(abs_src, start=self.build_context_dir)
+                    dst = f"/dependency_img_build/{base}"
+                    lines.append("RUN mkdir -p /dependency_img_build")
+                    lines.append(f"COPY {copy_src} {dst}")
+                    lines.append(f"RUN chmod +x {dst}")
+                    if base.endswith('.py'):
+                        lines.append(f"RUN echo \"DEBUG: http_proxy=$http_proxy https_proxy=$https_proxy\" && python3 {dst}")
+                    else:
+                        lines.append(f"RUN echo \"DEBUG: http_proxy=$http_proxy https_proxy=$https_proxy\" && /bin/bash {dst}")
+                else:
+                    lines.append(f"RUN echo \"DEBUG: http_proxy=$http_proxy https_proxy=$https_proxy\" && {cmd}")
             lines.append("")
         
         return lines
@@ -344,9 +362,50 @@ class DockerfileGenerator:
         
         for script_install in declaration.heavy_setup.script_installs:
             lines.append(f"# Script Install: {script_install.name}")
-            
+            # Optional staged copies before running file/commands
+            copies = getattr(script_install, 'copies', []) or []
+            for mapping in copies:
+                if not isinstance(mapping, str) or ':' not in mapping:
+                    # Skip invalid mapping entries
+                    continue
+                src_rel, dst = mapping.split(':', 1)
+                src_rel = src_rel.strip()
+                dst = dst.strip()
+                if not src_rel or not dst:
+                    continue
+                abs_src = os.path.abspath(os.path.join(self.config_dir, src_rel))
+                copy_src = os.path.relpath(abs_src, start=self.build_context_dir)
+                # Ensure destination directory exists
+                # If dst ends with '/', treat it as a directory; otherwise mkdir dirname
+                if dst.endswith('/'):
+                    dst_dir = dst
+                else:
+                    import posixpath
+                    dst_dir = posixpath.dirname(dst) or '/'
+                if dst_dir:
+                    lines.append(f"RUN mkdir -p {dst_dir}")
+                lines.append(f"COPY {copy_src} {dst}")
+
+            # Prefer 'file' if provided; commands/file 二选一
+            file_path = getattr(script_install, 'file', None)
+            if file_path:
+                rel = file_path.strip()
+                base = os.path.basename(rel)
+                abs_src = os.path.abspath(os.path.join(self.config_dir, rel))
+                copy_src = os.path.relpath(abs_src, start=self.build_context_dir)
+                dst = f"/dependency_img_build/{base}"
+                lines.append("RUN mkdir -p /dependency_img_build")
+                lines.append(f"COPY {copy_src} {dst}")
+                lines.append(f"RUN chmod +x {dst}")
+                if base.endswith('.py'):
+                    lines.append(f"RUN echo \"DEBUG: http_proxy=$http_proxy https_proxy=$https_proxy\" && python3 {dst}")
+                else:
+                    lines.append(f"RUN echo \"DEBUG: http_proxy=$http_proxy https_proxy=$https_proxy\" && /bin/bash {dst}")
+                lines.append("")
+                continue
             for command in script_install.commands:
-                lines.append(f"RUN echo \"DEBUG: http_proxy=$http_proxy https_proxy=$https_proxy\" && {command}")
+                cmd = command.strip()
+                lines.append(f"RUN echo \"DEBUG: http_proxy=$http_proxy https_proxy=$https_proxy\" && {cmd}")
             lines.append("")
         
         return lines
@@ -412,7 +471,22 @@ class DockerfileGenerator:
                 lines.append(f"# Config: {config.name}")
                 
                 for command in config.commands:
-                    lines.append(f"RUN echo \"DEBUG: http_proxy=$http_proxy https_proxy=$https_proxy\" && {command}")
+                    cmd = command.strip()
+                    if cmd.startswith("file:"):
+                        rel = cmd.split(":",1)[1].strip()
+                        base = os.path.basename(rel)
+                        abs_src = os.path.abspath(os.path.join(self.config_dir, rel))
+                        copy_src = os.path.relpath(abs_src, start=self.build_context_dir)
+                        dst = f"/dependency_img_build/{base}"
+                        lines.append("RUN mkdir -p /dependency_img_build")
+                        lines.append(f"COPY {copy_src} {dst}")
+                        lines.append(f"RUN chmod +x {dst}")
+                        if base.endswith('.py'):
+                            lines.append(f"RUN echo \"DEBUG: http_proxy=$http_proxy https_proxy=$https_proxy\" && python3 {dst}")
+                        else:
+                            lines.append(f"RUN echo \"DEBUG: http_proxy=$http_proxy https_proxy=$https_proxy\" && /bin/bash {dst}")
+                    else:
+                        lines.append(f"RUN echo \"DEBUG: http_proxy=$http_proxy https_proxy=$https_proxy\" && {cmd}")
                 lines.append("")
         
         return lines

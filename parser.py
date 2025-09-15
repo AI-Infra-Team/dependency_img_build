@@ -55,10 +55,20 @@ class DeclarationParser:
             script_installs = []
             if 'script_installs' in heavy_data:
                 for install_data in heavy_data['script_installs']:
+                    # commands 与 file 二选一；若同时存在则报错
+                    file_path = install_data.get('file')
+                    commands_list = install_data.get('commands', [])
+                    if file_path and commands_list:
+                        raise ValueError(
+                            f"script_installs[{install_data.get('name','<unnamed>')}] cannot specify both 'file' and 'commands'"
+                        )
+                    commands = commands_list if not file_path else []
                     install = ScriptInstall(
                         name=install_data['name'],
                         dependencies=install_data.get('dependencies', []),
-                        commands=install_data.get('commands', [])
+                        commands=commands,
+                        file=file_path,
+                        copies=install_data.get('copies', [])
                     )
                     script_installs.append(install)
             
@@ -118,15 +128,17 @@ class DeclarationParser:
         visited = set()
         rec_stack = set()
         
-        def dfs(node):
+        def dfs(node, depth=0):
+            print(f"[dfs] depth={depth} visiting={node} deps={graph.get(node, [])}")
             visited.add(node)
             rec_stack.add(node)
             
             for neighbor in graph.get(node, []):
                 if neighbor not in visited:
-                    if dfs(neighbor):
+                    if dfs(neighbor, depth + 1):
                         return True
                 elif neighbor in rec_stack:
+                    print(f"[dfs] depth={depth} back-edge detected: {node} -> {neighbor}")
                     return True
             
             rec_stack.remove(node)
@@ -134,7 +146,7 @@ class DeclarationParser:
         
         for stage in graph:
             if stage not in visited:
-                if dfs(stage):
+                if dfs(stage, 0):
                     return True
         return False
     
