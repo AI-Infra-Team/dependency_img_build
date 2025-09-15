@@ -192,7 +192,7 @@ class ContainerLayerBuilder:
                 cmds[0] = f"set -e; {first}"
                 self._exec_multi(container, cmds)
 
-            # Prepare commit label changes if dependency metadata provided
+            # Always flatten snapshot via export/import (no docker build, no multi-layer commit)
             change_args: List[str] = []
             if metadata_items:
                 try:
@@ -205,57 +205,34 @@ class ContainerLayerBuilder:
                         IMAGE_LABEL_VERSION: '1',
                         IMAGE_LABEL_CACHE_KEY: cache_key,
                         IMAGE_LABEL_CREATED: created,
-                        # Prefer b64 to avoid quoting/newline issues; include plain json for readability if wanted
                         IMAGE_LABEL_ITEMS_B64: payload_b64,
-                        # Keeping ITEMS as optional small/plain can be omitted if too large
-                        # IMAGE_LABEL_ITEMS: payload_json,
                     }
-                    # Build a single LABEL change with space-separated k=v pairs (values are b64/ASCII-safe)
                     parts = [f"{k}={v}" for k, v in labels.items()]
                     change_args = ['--change', 'LABEL ' + ' '.join(parts)]
                 except Exception as _e:
-                    # If label prep fails, proceed without labels (do not write legacy file)
                     print(f"⚠️  Failed to prepare label metadata: {_e}")
                     change_args = []
 
-            # Commit snapshot (with label changes if any)
-            res_commit = self._docker(['commit'] + change_args + [container, image_tag], capture=True)
-            if res_commit.returncode != 0:
-                err = (res_commit.stderr or '').strip()
-                print(f"⚠️  docker commit failed: {err}")
-                # Fallback: flatten via export/import to avoid deep layer issues (e.g., 'max depth exceeded')
-                try:
-                    # If depth exceeded, proactively remove the parent image to force future rebuild
-                    if 'max depth exceeded' in err.lower():
-                        print(f"   Depth exceeded detected; removing parent image to force base rebuild: {parent_image}")
-                        self._docker(['rmi', '-f', parent_image], capture=True)
-                    print("   Trying fallback: docker export/import to flatten image layers...")
-                    # Export
-                    with tempfile.NamedTemporaryFile(prefix='depimg_', suffix='.tar', delete=False) as tf:
-                        tar_path = tf.name
-                    # Prefer 'docker export -o'
-                    exp = self._docker(['export', '-o', tar_path, container], capture=True)
-                    if exp.returncode != 0:
-                        # Fallback to streaming export without -o via shell redirection using Python
-                        with open(tar_path, 'wb') as f:
-                            proc = subprocess.Popen(sudo_prefix() + ['docker', 'export', container], stdout=f)
-                            proc.wait()
-                            if proc.returncode != 0:
-                                raise RuntimeError("docker export failed")
-                    # Import
-                    # Apply label changes on import as well, if available
-                    import_args = ['import']
-                    if change_args:
-                        # change_args looks like ['--change', 'LABEL ...']; docker import accepts the same
-                        import_args += change_args
-                    import_args += [tar_path, image_tag]
-                    imp = self._docker(import_args, capture=True)
-                    if imp.returncode != 0:
-                        raise RuntimeError(f"docker import failed: {imp.stderr}")
-                    print("   Fallback import succeeded")
-                    return image_tag
-                except Exception as fe:
-                    raise RuntimeError(f"docker commit failed and fallback import failed: {fe}")
+            print("   Flattening snapshot via docker export/import...")
+            with tempfile.NamedTemporaryFile(prefix='depimg_', suffix='.tar', delete=False) as tf:
+                tar_path = tf.name
+            exp = self._docker(['export', '-o', tar_path, container], capture=True)
+            if exp.returncode != 0:
+                # Fallback to streaming export without -o
+                with open(tar_path, 'wb') as f:
+                    proc = subprocess.Popen(sudo_prefix() + ['docker', 'export', container], stdout=f)
+                    proc.wait()
+                    if proc.returncode != 0:
+                        raise RuntimeError("docker export failed")
+            # Import with labels
+            import_args = ['import']
+            if change_args:
+                import_args += change_args
+            import_args += [tar_path, image_tag]
+            imp = self._docker(import_args, capture=True)
+            if imp.returncode != 0:
+                raise RuntimeError(f"docker import failed: {imp.stderr}")
+            print("   Snapshot flatten succeeded")
             return image_tag
         finally:
             if container:

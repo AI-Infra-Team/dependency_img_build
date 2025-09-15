@@ -604,17 +604,20 @@ class BuildOrchestrator:
             rebuild_from_step = 0
             print("🔥 Force rebuild requested - ignoring all cache")
         
-        # Execute build
-        success = self._execute_build(
-            declaration, stage_order, build_steps, 
-            rebuild_plan["actions"], image_tag, rebuild_from_step
-        )
-        
-        if success:
-            self.tracker.record_build(build_steps, image_tag)
-            print(f"Successfully built image: {image_tag}")
-        
-        return success
+        # Snapshot-only finalization: tag last built image as final image tag
+        final_tag = f"{declaration.image_name}:{declaration.image_tag}"
+        print(f"\n🏁 Finalizing image: tagging last built '{parent_image}' as '{final_tag}'")
+        try:
+            self._tag_image(parent_image, final_tag)
+            print(f"Successfully built image: {final_tag}")
+            try:
+                self.tracker.record_build(build_steps, final_tag)
+            except Exception:
+                pass
+            return True
+        except Exception as e:
+            print(f"Build failed during final tagging: {e}")
+            return False
     
     def _parse_layers(self, declaration: UserDeclaration) -> List[Layer]:
         """Parse layers from declaration"""
@@ -761,57 +764,31 @@ class BuildOrchestrator:
         )
     
     def _build_layer(self, layer: Layer, parent_image: str, env_vars: Dict[str, str], image_name: str) -> str:
-        """Build a single layer"""
+        """Build a single layer using container snapshot (no Dockerfile)."""
         print(f"🔨 Starting build for layer: {layer.name} (type: {layer.type.value})")
         print(f"   Parent image: {parent_image}")
-        
-        # Generate Dockerfile
-        print(f"   Generating Dockerfile...")
-        dockerfile_path = self._generate_layer_dockerfile(layer, parent_image, env_vars)
-        print(f"   Dockerfile generated: {dockerfile_path}")
-        
-        # Build image
+        # Ensure container builder exists
+        if not hasattr(self, '_container_builder') or self._container_builder is None:
+            self._container_builder = ContainerLayerBuilder(env_vars, config_dir=getattr(self, 'config_dir', os.getcwd()), preserve_on_failure=True)
+        # Compute target tag and build via snapshot
         image_tag = self._format_layer_image_tag(layer, image_name)
         print(f"   Target image: {image_tag}")
-        
-        cmd = sudo_prefix() + [
-            'docker', 'build',
-            '-f', dockerfile_path,
-            '-t', image_tag,
-            self.work_dir
-        ]
-        
-        # Outer docker build retries: rely on inner RUN-level retry for package layers
-        # so we only run docker build once per layer to avoid 3x3 attempts.
-        max_retries = 1
-        
-        for attempt in range(max_retries):
-            if max_retries > 1:
-                print(f"   Attempt {attempt + 1}/{max_retries}...")
-            
-            print(f"   Running command: {' '.join(cmd)}")
-            print(f"   Starting Docker build (real-time output)...")
-            
-            # Run without capturing output so it shows in real time; enable BuildKit
-            env = os.environ.copy()
-            env.setdefault('DOCKER_BUILDKIT', '1')
-            env.setdefault('BUILDKIT_PROGRESS', 'plain')
-            result = subprocess.run(cmd, cwd=self.work_dir, env=env)
-            
-            if result.returncode == 0:
-                print(f"✅ Successfully built layer {layer.name}")
-                return image_tag
-            else:
-                if attempt < max_retries - 1:
-                    print(f"⚠️  Build attempt {attempt + 1} failed for layer {layer.name}, retrying...")
-                    # Add a small delay before retry
-                    import time
-                    time.sleep(2)
-                else:
-                    print(f"❌ Failed to build layer {layer.name} after {max_retries} attempts")
-                    raise RuntimeError(f"Layer build failed: {layer.name}")
-        
-        return image_tag
+        try:
+            built = self._container_builder.build_layer(layer, parent_image, image_tag, copies=None, metadata_items=None)
+            print(f"✅ Successfully built layer {layer.name} via snapshot")
+            return built
+        except Exception as e:
+            cname = getattr(self._container_builder, 'last_container_name', None)
+            cid = getattr(self._container_builder, 'last_container_id', None)
+            fcmd = getattr(self._container_builder, 'last_failed_cmd', None)
+            ref = cname or cid or '<unknown>'
+            print(f"❌ Snapshot build failed for layer {layer.name}: {e}")
+            print("🧯 Reproduce locally:")
+            print(f"  sudo -E docker start {ref} && sudo -E docker exec -it {ref} /bin/bash")
+            if fcmd:
+                import json as _json
+                print(f"  sudo -E docker exec -it {ref} /bin/bash -lc {_json.dumps(fcmd)}")
+            raise
     
     def _generate_layer_dockerfile(self, layer: Layer, parent_image: str, env_vars: Dict[str, str]) -> str:
         """Generate Dockerfile for a layer"""
