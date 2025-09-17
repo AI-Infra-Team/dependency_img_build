@@ -1,8 +1,10 @@
 import os
 import shlex
+import string
 import subprocess
 import uuid
 import tempfile
+import shutil
 from typing import Dict, List, Optional
 
 from config import (
@@ -45,7 +47,19 @@ class ContainerLayerBuilder:
 
     def _container_name(self, layer_name: str) -> str:
         suffix = uuid.uuid4().hex[:8]
-        return f"depimg_{layer_name}_{suffix}"
+
+        def sanitize(value: str) -> str:
+            allowed = string.ascii_letters + string.digits + '._-'
+            sanitized = ''.join(ch if ch in allowed else '_' for ch in value)
+            sanitized = sanitized.strip('._-')
+            if not sanitized:
+                sanitized = 'layer'
+            if sanitized[0] not in string.ascii_letters + string.digits:
+                sanitized = f'layer_{sanitized}'
+            return sanitized
+
+        safe = sanitize(layer_name)
+        return f"depimg_{safe}_{suffix}"
 
     def _env_args(self) -> List[str]:
         args: List[str] = []
@@ -110,10 +124,18 @@ class ContainerLayerBuilder:
             # Enable buildkit for any nested docker, though we don't run nested docker here
             env.setdefault('DOCKER_BUILDKIT', '1')
             env.setdefault('BUILDKIT_PROGRESS', 'plain')
-            res = self._docker(['create'] + self._env_args() + ['--name', name, parent_image] + idle_cmd, env=env, capture=True)
-            if res.returncode != 0:
-                raise RuntimeError(f"docker create failed: {res.stderr}")
-            container = res.stdout.strip()
+            cid_dir = tempfile.mkdtemp(prefix='depimg_cid_')
+            cid_path = os.path.join(cid_dir, 'cid')
+            try:
+                res = self._docker(['create'] + self._env_args() + ['--cidfile', cid_path, '--name', name, parent_image] + idle_cmd, env=env)
+                if res.returncode != 0:
+                    raise RuntimeError(f"docker create failed with exit code {res.returncode}; check docker output above")
+                with open(cid_path, 'r', encoding='utf-8') as f:
+                    container = f.read().strip()
+                if not container:
+                    raise RuntimeError("docker create did not write a container id; check docker output above")
+            finally:
+                shutil.rmtree(cid_dir, ignore_errors=True)
             self.last_container_name = name
             self.last_container_id = container
             created = True
@@ -216,7 +238,7 @@ class ContainerLayerBuilder:
             print("   Flattening snapshot via docker export/import...")
             with tempfile.NamedTemporaryFile(prefix='depimg_', suffix='.tar', delete=False) as tf:
                 tar_path = tf.name
-            exp = self._docker(['export', '-o', tar_path, container], capture=True)
+            exp = self._docker(['export', '-o', tar_path, container])
             if exp.returncode != 0:
                 # Fallback to streaming export without -o
                 with open(tar_path, 'wb') as f:
@@ -229,9 +251,9 @@ class ContainerLayerBuilder:
             if change_args:
                 import_args += change_args
             import_args += [tar_path, image_tag]
-            imp = self._docker(import_args, capture=True)
+            imp = self._docker(import_args)
             if imp.returncode != 0:
-                raise RuntimeError(f"docker import failed: {imp.stderr}")
+                raise RuntimeError(f"docker import failed with exit code {imp.returncode}; check docker output above")
             print("   Snapshot flatten succeeded")
             return image_tag
         finally:
