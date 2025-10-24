@@ -214,7 +214,7 @@ class ContainerLayerBuilder:
                 cmds[0] = f"set -e; {first}"
                 self._exec_multi(container, cmds)
 
-            # Always flatten snapshot via export/import (no docker build, no multi-layer commit)
+            # Prefer docker commit (keeps layered history); lazily fall back to flattening on failure
             change_args: List[str] = []
             if metadata_items:
                 try:
@@ -235,7 +235,18 @@ class ContainerLayerBuilder:
                     print(f"⚠️  Failed to prepare label metadata: {_e}")
                     change_args = []
 
-            print("   Flattening snapshot via docker export/import...")
+            # Try commit first
+            print("   Committing container snapshot to image tag...")
+            commit_args = ['commit']
+            if change_args:
+                commit_args += change_args
+            commit_args += [container, image_tag]
+            com = self._docker(commit_args)
+            if com.returncode == 0:
+                print("   Snapshot commit succeeded")
+                return image_tag
+
+            print(f"   ⚠️  Commit failed (exit {com.returncode}). Falling back to flattening via docker export/import...")
             with tempfile.NamedTemporaryFile(prefix='depimg_', suffix='.tar', delete=False) as tf:
                 tar_path = tf.name
             exp = self._docker(['export', '-o', tar_path, container])
