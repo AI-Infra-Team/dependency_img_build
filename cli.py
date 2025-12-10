@@ -10,7 +10,7 @@ from typing import Dict, Any
 from config import CacheConfig
 import yaml
 from build_orchestrator import BuildOrchestrator
-from utils import sudo_prefix as _sudo_prefix
+from utils import sudo_prefix
 import shutil
 import subprocess
 
@@ -56,31 +56,20 @@ def cmd_build(args):
     print(f"   Configuration: {args.config}")
     print(f"   Force rebuild: {args.force_rebuild}")
     
-    # Preflight: verify Docker daemon is accessible either directly or via sudo
+    # Preflight: verify Docker daemon is accessible using unified sudo policy
     def _check_docker_access() -> bool:
-        # Try without sudo first
         try:
-            if shutil.which('docker'):
-                r = subprocess.run(['docker', 'info'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
-                if r.returncode == 0:
-                    return True
+            cmd = sudo_prefix() + ['docker', 'info']
+            r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+            return r.returncode == 0
         except Exception:
-            pass
-        # Try with sudo if available and permitted
-        try:
-            if shutil.which('sudo'):
-                r = subprocess.run(['sudo', '-n', 'docker', 'info'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
-                if r.returncode == 0:
-                    return True
-        except Exception:
-            pass
-        return False
+            return False
 
     if not _check_docker_access():
         print("❌ Docker daemon is not accessible.")
-        print("   - Tried: 'docker info' and 'sudo -n docker info'")
-        print("   - Hints: add your user to the 'docker' group, or run with sudo where permitted.")
-        print("   - In restricted sandboxes, sudo may be blocked (nnp). Set NO_SUDO=1 to suppress sudo attempts.")
+        tried = " ".join(sudo_prefix() + ['docker', 'info'])
+        print(f"   - Tried: {tried}")
+        print("   - Hints: add your user to the 'docker' group, or run with sudo (env preserved via -E).")
         return 1
     
     # Load cache configuration
