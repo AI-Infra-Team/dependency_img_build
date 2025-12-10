@@ -885,7 +885,7 @@ class BuildOrchestrator:
     
     def _image_exists(self, image_tag: str) -> bool:
         """Check if Docker image exists"""
-        cmd = ['docker', 'images', '-q', image_tag]
+        cmd = sudo_prefix() + ['docker', 'images', '-q', image_tag]
         result = subprocess.run(cmd, capture_output=True, text=True)
         return bool(result.stdout.strip())
     

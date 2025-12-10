@@ -8,6 +8,7 @@ import subprocess
 import json
 import os
 from typing import List, Dict, Tuple, Set
+from utils import sudo_prefix
 
 class SimpleReuseManager:
     def __init__(self):
@@ -21,7 +22,7 @@ class SimpleReuseManager:
         print("\n🔍 Finding best existing image...")
         
         # Get ALL docker images
-        cmd = ['docker', 'images', '--format', '{{.Repository}}:{{.Tag}}', 'ubuntu22-dev']
+        cmd = sudo_prefix() + ['docker', 'images', '--format', '{{.Repository}}:{{.Tag}}', 'ubuntu22-dev']
         result = subprocess.run(cmd, capture_output=True, text=True)
         
         if result.returncode != 0:
@@ -80,7 +81,7 @@ class SimpleReuseManager:
         Check if we already have an image with ALL the packages.
         """
         # Check if ubuntu22-dev:latest exists and has all we need
-        cmd = ['docker', 'images', '-q', 'ubuntu22-dev:latest']
+        cmd = sudo_prefix() + ['docker', 'images', '-q', 'ubuntu22-dev:latest']
         result = subprocess.run(cmd, capture_output=True, text=True)
         
         if result.stdout.strip():
@@ -100,7 +101,7 @@ class SimpleReuseManager:
             escaped = last_package.replace('-', '_').replace('+', 'plus')
             
             # Look for an image with this package
-            cmd = ['docker', 'images', '--format', '{{.Repository}}:{{.Tag}}', f'ubuntu22-dev']
+            cmd = sudo_prefix() + ['docker', 'images', '--format', '{{.Repository}}:{{.Tag}}', 'ubuntu22-dev']
             result = subprocess.run(cmd, capture_output=True, text=True)
             
             for image in result.stdout.strip().split('\n'):

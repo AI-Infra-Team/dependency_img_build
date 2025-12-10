@@ -1,47 +1,21 @@
 from typing import List
 import os
-import shutil
-import subprocess
-
-
-def _can_run(cmd: list) -> bool:
-    try:
-        # Use a short timeout to avoid hanging
-        r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3)
-        return r.returncode == 0
-    except Exception:
-        return False
 
 
 def sudo_prefix() -> List[str]:
-    """Choose whether to use sudo for Docker commands.
+    """Return the unified sudo prefix policy for this project.
 
-    Strategy:
-    - If NO_SUDO=1 is set, never use sudo.
-    - If running as root, don't use sudo.
-    - If current user can talk to Docker daemon without sudo, don't use sudo.
-    - If sudo is available and can run non-interactively, use ['sudo', '-E'].
-    - Otherwise, don't use sudo (caller will likely see a Docker permission error).
+    Rules (keep it simple, no fallbacks):
+    - If running as root (euid == 0): return []
+    - Otherwise: always return ["sudo", "-E"]
+
+    Rationale:
+    - Avoids environment-driven switches and probing logic that cause divergent paths.
+    - Callers surface any permission issues directly to the user instead of silently
+      attempting alternate modes.
     """
-    # Explicit override to disable sudo (useful in restricted sandboxes)
-    if os.environ.get("NO_SUDO", "").strip() in ("1", "true", "True"):
-        return []
-
     try:
-        if os.geteuid() == 0:
-            return []
+        return [] if os.geteuid() == 0 else ["sudo", "-E"]
     except Exception:
-        # If we can't determine EUID, continue with best-effort checks
-        pass
-
-    # If docker works without sudo, prefer that
-    if shutil.which("docker") and _can_run(["docker", "info"]):
-        return []
-
-    # If sudo exists and can run non-interactively, prefer sudo -E
-    if shutil.which("sudo") and _can_run(["sudo", "-n", "true"]):
-        # Use non-interactive sudo and preserve env
-        return ["sudo", "-n", "-E"]
-
-    # Fall back to no sudo; callers will surface a helpful error from Docker
-    return []
+        # If EUID cannot be determined, default to requiring sudo with env preserved.
+        return ["sudo", "-E"]
