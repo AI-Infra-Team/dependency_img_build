@@ -179,8 +179,12 @@ class BuildOrchestrator:
             base_repo, base_tag = self._parse_base_image(declaration.base_image)
             self.base_repo_slug = self._slugify(base_repo)
             self.base_tag_slug = self._slugify(base_tag or 'latest')
-            # Repository name with base prefix
-            self.repo_name = f"{self.base_repo_slug}__{declaration.image_name}"
+            # Derive a stable hash from the absolute project path (config directory)
+            # This guarantees cross-project image isolation on a single host.
+            project_abs = os.path.abspath(getattr(self, 'config_dir', os.getcwd()))
+            self.project_path_hash = hashlib.sha256(project_abs.encode('utf-8')).hexdigest()[:12]
+            # Repository name and tag include project path hash for uniqueness
+            self.repo_name = f"{self.base_repo_slug}__{declaration.image_name}__p_{self.project_path_hash}"
             
             if force_rebuild:
                 print("🔥 Force rebuild requested - ignoring cache")
@@ -456,7 +460,7 @@ class BuildOrchestrator:
                 if final_image:
                     # New naming: repo = baseNameSlug__image_name, tag = baseTagSlug__image_tag
                     target_repo = self.repo_name
-                    target_tag = f"{self.base_tag_slug}__{declaration.image_tag}"
+                    target_tag = f"{self.base_tag_slug}__{declaration.image_tag}__p_{self.project_path_hash}"
                     target_ref = f"{target_repo}:{target_tag}"
                     print(f"   Final image: {final_image}")
                     print(f"   Target tag: {target_ref}")
@@ -516,7 +520,8 @@ class BuildOrchestrator:
         """
         import hashlib
         content_hash = hashlib.sha256("\n".join(items).encode('utf-8')).hexdigest()[:12]
-        meta_tag = f"{self.repo_name}:{self.base_tag_slug}__meta-{content_hash}"
+        # Tag includes project path hash for isolation across projects
+        meta_tag = f"{self.repo_name}:{self.base_tag_slug}__meta-{content_hash}__p_{self.project_path_hash}"
         # Use container builder to commit labels without changing filesystem
         builder = getattr(self, '_container_builder', None)
         if builder is None:
@@ -529,7 +534,8 @@ class BuildOrchestrator:
         """Format the image tag for a layer using naming scheme."""
         name = self._slugify(layer.name)
         ltype = self._slugify(layer.type.value)
-        return f"{self.repo_name}:{self.base_tag_slug}__layer-{ltype}-{name}-{layer.hash}"
+        # Include project path hash to prevent cross-project collisions for local cache layers
+        return f"{self.repo_name}:{self.base_tag_slug}__layer-{ltype}-{name}-{layer.hash}__p_{self.project_path_hash}"
 
     @staticmethod
     def _slugify(s: str) -> str:
