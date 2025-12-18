@@ -74,38 +74,28 @@ class LayerReuseManager:
             # Single place for output: stdout, line-buffered with sanitization
             safe = _sanitize(msg)
             sys.stdout.write(safe + "\n")
-            try:
-                sys.stdout.flush()
-            except Exception:
-                pass
+            sys.stdout.flush()
+            if LOG_FILE_PATH:
+                with open(LOG_FILE_PATH, 'a', encoding='utf-8') as f:
+                    f.write(safe + "\n")
         def _print_block(lines: List[str]):
             # Print a whole logical block atomically to reduce interleaving
             if not lines:
                 return
             safe = "\n".join(_sanitize(line) for line in lines)
             sys.stdout.write(safe + "\n")
-            try:
-                sys.stdout.flush()
-            except Exception:
-                pass
+            sys.stdout.flush()
+            if LOG_FILE_PATH:
+                with open(LOG_FILE_PATH, 'a', encoding='utf-8') as f:
+                    f.write(safe + "\n")
 
         def _restore_tty():
             if not sys.stdout.isatty():
                 return
             if os.getenv('IMGDEPS_TTY_RESTORE', '1').lower() not in ('1','true','yes'):
                 return
-            try:
-                if shutil.which('stty'):
-                    subprocess.run(['stty', 'sane'], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            except Exception:
-                pass
-            if LOG_FILE_PATH:
-                try:
-                    with open(LOG_FILE_PATH, 'a', encoding='utf-8') as f:
-                        f.write(safe + "\n")
-                except Exception:
-                    # ignore logging failures
-                    pass
+            if shutil.which('stty'):
+                subprocess.run(['stty', 'sane'], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
         _restore_tty()
         _println(f"{ICON_FIND} Finding optimal reuse strategy (in-image metadata)...")
@@ -345,17 +335,23 @@ class LayerReuseManager:
                             items = json.loads(data)
                             if isinstance(items, list):
                                 return [str(x) for x in items if isinstance(x, (str, int, float)) and str(x).strip()], dbg
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            dbg.setdefault("warnings", []).append(
+                                f"failed to parse label {IMAGE_LABEL_ITEMS_B64}: {type(e).__name__}: {e}"
+                            )
                     if IMAGE_LABEL_ITEMS in labels and labels[IMAGE_LABEL_ITEMS]:
                         try:
                             items = json.loads(labels[IMAGE_LABEL_ITEMS])
                             if isinstance(items, list):
                                 return [str(x) for x in items if isinstance(x, (str, int, float)) and str(x).strip()], dbg
-                        except Exception:
-                            pass
-        except Exception:
-            pass
+                        except Exception as e:
+                            dbg.setdefault("warnings", []).append(
+                                f"failed to parse label {IMAGE_LABEL_ITEMS}: {type(e).__name__}: {e}"
+                            )
+        except Exception as e:
+            dbg.setdefault("warnings", []).append(
+                f"docker image inspect failed: {type(e).__name__}: {e}"
+            )
 
         # Legacy fallback: read file inside container (slower)
         try:

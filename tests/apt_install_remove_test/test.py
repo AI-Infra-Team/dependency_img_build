@@ -47,11 +47,8 @@ def run_command(cmd, capture_output=True, check=True):
 
 def docker_cmd(cmd: str) -> str:
     """Prefix docker command with sudo when not running as root"""
-    try:
-        if os.geteuid() != 0:
-            return f"sudo -E {cmd}"
-    except Exception:
-        pass
+    if hasattr(os, "geteuid") and os.geteuid() != 0:
+        return f"sudo -E {cmd}"
     return cmd
 
 def check_package_in_container(container_name, package_name):

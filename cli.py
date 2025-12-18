@@ -57,6 +57,7 @@ def cmd_build(args):
     print(f"   Force rebuild: {args.force_rebuild}")
     
     # Preflight: verify Docker daemon is accessible either directly or via sudo
+    docker_probe_errors: list[str] = []
     def _check_docker_access() -> bool:
         # Try without sudo first
         try:
@@ -64,21 +65,25 @@ def cmd_build(args):
                 r = subprocess.run(['docker', 'info'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
                 if r.returncode == 0:
                     return True
-        except Exception:
-            pass
+        except Exception as e:
+            docker_probe_errors.append(f"docker info failed: {type(e).__name__}: {e}")
         # Try with sudo if available and permitted
         try:
             if shutil.which('sudo'):
                 r = subprocess.run(['sudo', '-n', 'docker', 'info'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
                 if r.returncode == 0:
                     return True
-        except Exception:
-            pass
+        except Exception as e:
+            docker_probe_errors.append(f"sudo -n docker info failed: {type(e).__name__}: {e}")
         return False
 
     if not _check_docker_access():
         print("❌ Docker daemon is not accessible.")
         print("   - Tried: 'docker info' and 'sudo -n docker info'")
+        if docker_probe_errors:
+            print("   - Probe errors:")
+            for msg in docker_probe_errors:
+                print(f"     - {msg}")
         print("   - Hints: add your user to the 'docker' group, or run with sudo where permitted.")
         print("   - In restricted sandboxes, sudo may be blocked (nnp). Set NO_SUDO=1 to suppress sudo attempts.")
         return 1
@@ -92,10 +97,7 @@ def cmd_build(args):
     print(f"   Initializing build orchestrator...")
     orchestrator = BuildOrchestrator(cache_config)
     # Provide config_dir to orchestrator for resolving file: paths and copies
-    try:
-        orchestrator.config_dir = os.path.dirname(os.path.abspath(args.config))
-    except Exception:
-        pass
+    orchestrator.config_dir = os.path.dirname(os.path.abspath(args.config))
     
     if not os.path.exists(args.config):
         print(f"❌ Error: Configuration file '{args.config}' not found")

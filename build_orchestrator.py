@@ -358,30 +358,24 @@ class BuildOrchestrator:
                     print(f"   Building layer {layer.name} (container commit mode)...")
                     # Resolve extra copies for script installs, if any
                     extra_copies: List[str] = []
-                    try:
-                        if hasattr(self, '_script_install_defs') and layer.type == LayerType.SCRIPT:
-                            meta = self._script_install_defs.get(layer.name)
-                            if meta and getattr(meta, 'copies', None):
-                                extra_copies = list(meta.copies)
-                    except Exception:
-                        pass
+                    if layer.type == LayerType.SCRIPT:
+                        meta = self._script_install_defs.get(layer.name)
+                        if meta and getattr(meta, 'copies', None):
+                            extra_copies = list(meta.copies)
 
                     # Build dependency metadata items up to this point (built + reused)
                     dep_items: List[str] = []
-                    try:
-                        maintenance_names = {"apt_update", "yum_makecache"}
-                        for l in all_layers:
-                            if l.type == LayerType.BASE:
-                                continue
-                            if l in built_layers or l.name in reused_layer_names:
-                                if l.type in (LayerType.APT, LayerType.YUM, LayerType.PIP):
-                                    dep_items.append(f"{l.type.value}:{l.content}")
-                                elif l.type == LayerType.SCRIPT:
-                                    if l.name in maintenance_names or l.name.endswith("_cleanup_remove"):
-                                        continue
-                                    dep_items.append(f"script:{l.name}")
-                    except Exception:
-                        dep_items = []
+                    maintenance_names = {"apt_update", "yum_makecache"}
+                    for l in all_layers:
+                        if l.type == LayerType.BASE:
+                            continue
+                        if l in built_layers or l.name in reused_layer_names:
+                            if l.type in (LayerType.APT, LayerType.YUM, LayerType.PIP):
+                                dep_items.append(f"{l.type.value}:{l.content}")
+                            elif l.type == LayerType.SCRIPT:
+                                if l.name in maintenance_names or l.name.endswith("_cleanup_remove"):
+                                    continue
+                                dep_items.append(f"script:{l.name}")
 
                     # Commit layer
                     target_image_tag = self._format_layer_image_tag(layer, declaration.image_name)
@@ -616,10 +610,7 @@ class BuildOrchestrator:
         try:
             self._tag_image(parent_image, final_tag)
             print(f"Successfully built image: {final_tag}")
-            try:
-                self.tracker.record_build(build_steps, final_tag)
-            except Exception:
-                pass
+            self.tracker.record_build(build_steps, final_tag)
             return True
         except Exception as e:
             print(f"Build failed during final tagging: {e}")
@@ -694,10 +685,7 @@ class BuildOrchestrator:
                         content=content
                     )
                     # Store original definition for container builder (copies, file, etc.)
-                    try:
-                        self._script_install_defs[script.name] = script
-                    except Exception:
-                        pass
+                    self._script_install_defs[script.name] = script
                     layers.append(layer)
             # Parse PIP packages from heavy_setup
             if getattr(declaration.heavy_setup, 'pip_packages', []):
@@ -960,11 +948,8 @@ class BuildOrchestrator:
         
         try:
             # Pass context info to generator so it can resolve file: paths relative to config file
-            try:
-                self.generator.config_dir = getattr(self, 'config_dir', os.getcwd())
-                self.generator.build_context_dir = os.getcwd()
-            except Exception:
-                pass
+            self.generator.config_dir = getattr(self, 'config_dir', os.getcwd())
+            self.generator.build_context_dir = os.getcwd()
             # Execute Docker build
             cmd = sudo_prefix() + [
                 'docker', 'build',

@@ -17,8 +17,8 @@ class BuildTracker:
             try:
                 with open(self.cache_file, 'r') as f:
                     return json.load(f)
-            except (json.JSONDecodeError, IOError):
-                pass
+            except (json.JSONDecodeError, IOError) as e:
+                raise RuntimeError(f"Failed to load build cache file: {self.cache_file}") from e
         return {"builds": [], "step_cache": {}, "stage_history": {}, "stage_hashes": {}}
     
     def _save_history(self):
