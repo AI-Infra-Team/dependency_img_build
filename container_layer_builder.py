@@ -11,6 +11,7 @@ from config import (
     IMAGE_DEP_METADATA_PATH,  # legacy path (no longer written)
     Layer,
     LayerType,
+    yum_makecache_refresh_cmd,
     IMAGE_LABEL_VERSION,
     IMAGE_LABEL_CACHE_KEY,
     IMAGE_LABEL_CREATED,
@@ -174,7 +175,7 @@ class ContainerLayerBuilder:
                     cmds.append('rm -rf /var/lib/apt/lists/* || true')
                 elif layer.type == LayerType.YUM:
                     if layer.name in ("yum_makecache", "yum_refresh"):
-                        cmds.append('yum makecache')
+                        cmds.append(yum_makecache_refresh_cmd())
                     else:
                         cmds.append(f'yum install -y {shlex.quote(pkg)}')
                 else:  # pip

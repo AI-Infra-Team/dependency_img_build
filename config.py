@@ -7,6 +7,33 @@ import hashlib
 # (legacy; no longer written in new builds — kept for backward compatibility reads)
 IMAGE_DEP_METADATA_PATH = "/opt/dependency_img_build/dependencies.list"
 
+# YUM metadata refresh throttling (timestamp lives inside the image/container).
+# Motivation: `yum makecache` is expensive and often redundant across incremental builds.
+YUM_MAKECACHE_STAMP_PATH = "/var/cache/dependency_img_build/yum_makecache_last_epoch"
+YUM_MAKECACHE_TTL_DAYS = 30
+YUM_MAKECACHE_TTL_SECONDS = YUM_MAKECACHE_TTL_DAYS * 24 * 60 * 60
+
+def yum_makecache_refresh_cmd() -> str:
+    stamp = YUM_MAKECACHE_STAMP_PATH
+    ttl = YUM_MAKECACHE_TTL_SECONDS
+    return (
+        f"stamp='{stamp}'; ttl_secs={ttl}; now=$(date +%s); "
+        "if [ -f \"$stamp\" ]; then "
+        "last=$(cat \"$stamp\"); "
+        "case \"$last\" in (''|*[!0-9]*) "
+        "echo \"Invalid yum makecache timestamp file: $stamp (got: $last)\"; exit 2;; "
+        "esac; "
+        "age=$((now-last)); "
+        "if [ \"$age\" -lt \"$ttl_secs\" ]; then "
+        "echo \"Skip yum makecache: $stamp age=${age}s (<${ttl_secs}s)\"; exit 0; "
+        "fi; "
+        "fi; "
+        "echo \"Run yum makecache (stamp=$stamp, ttl=${ttl_secs}s)\"; "
+        "yum makecache; "
+        "mkdir -p \"$(dirname \"$stamp\")\"; "
+        "printf '%s\\n' \"$now\" > \"$stamp\""
+    )
+
 # Image label keys for dependency metadata (preferred, faster, no filesystem writes)
 IMAGE_LABEL_NS = "io.teleinfra.imgdeps"
 IMAGE_LABEL_VERSION = f"{IMAGE_LABEL_NS}.version"

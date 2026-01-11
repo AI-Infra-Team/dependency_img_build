@@ -8,7 +8,14 @@ import concurrent.futures
 from typing import List, Optional, Dict, Tuple, Set
 from datetime import datetime, timedelta
 from pathlib import Path
-from config import UserDeclaration, CacheConfig, CacheLevel, Layer, LayerType
+from config import (
+    UserDeclaration,
+    CacheConfig,
+    CacheLevel,
+    Layer,
+    LayerType,
+    yum_makecache_refresh_cmd,
+)
 from parser import DeclarationParser
 from dockerfile_generator import DockerfileGenerator
 from build_tracker import BuildTracker
@@ -74,7 +81,7 @@ class YumManager(PackageManager):
         return True
 
     def refresh_cmd(self) -> Optional[str]:
-        return 'yum makecache'
+        return yum_makecache_refresh_cmd()
 
     def install_cmd(self, package: str) -> str:
         return f"yum install -y {package}"
