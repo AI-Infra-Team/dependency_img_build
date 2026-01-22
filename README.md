@@ -55,6 +55,37 @@
 - `inherit_proxy`
 - `http_proxy` / `https_proxy` / `HTTP_PROXY` / `HTTPS_PROXY`
 
+另外支持（YUM/AlmaLinux 等）在构建容器内写入自定义 repo 文件：
+- `yum_repo_content`: repo 文件内容（会参与依赖 checksum）
+- `yum_repo_path`: 写入路径（默认 `/etc/yum.repos.d/almalinux.repo`）
+- `yum_sources`: 兼容字段，repo 文件逐行列表（等价于 `yum_repo_content`）
+
+示例（Aliyun AlmaLinux 镜像源）：
+```yaml
+base_image: "almalinux:8"
+yum_repo_content: |
+  [baseos]
+  name=AlmaLinux $releasever - BaseOS
+  baseurl=https://mirrors.aliyun.com/almalinux/$releasever/BaseOS/$basearch/os/
+  gpgcheck=1
+  enabled=1
+  gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-AlmaLinux
+
+  [appstream]
+  name=AlmaLinux $releasever - AppStream
+  baseurl=https://mirrors.aliyun.com/almalinux/$releasever/AppStream/$basearch/os/
+  gpgcheck=1
+  enabled=1
+  gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-AlmaLinux
+
+  [extras]
+  name=AlmaLinux $releasever - Extras
+  baseurl=https://mirrors.aliyun.com/almalinux/$releasever/Extras/$basearch/os/
+  gpgcheck=1
+  enabled=1
+  gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-AlmaLinux
+```
+
 如需扩展忽略列表或输出位置，可在 `scripts/dependency_img_build/cli.py` 中微调逻辑。
 
 ## ScriptInstall 用法（commands 与 file 二选一）

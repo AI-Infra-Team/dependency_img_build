@@ -106,6 +106,9 @@ class DeclarationParser:
             inherit_custom_env=data.get('inherit_custom_env', []),
             exclude_env=data.get('exclude_env', [])
             ,apt_sources=data.get('apt_sources', [])
+            ,yum_repo_content=data.get('yum_repo_content')
+            ,yum_sources=data.get('yum_sources', [])
+            ,yum_repo_path=data.get('yum_repo_path', "/etc/yum.repos.d/almalinux.repo")
         )
     
     def validate_declaration(self, declaration: UserDeclaration) -> bool:

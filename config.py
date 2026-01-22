@@ -150,6 +150,14 @@ class UserDeclaration:
     
     # APT sources configuration (lines to write to /etc/apt/sources.list)
     apt_sources: List[str] = None
+
+    # YUM repo override (useful for AlmaLinux/CentOS-like images).
+    # When set, the build will write this content into yum_repo_path inside the container
+    # before running yum metadata refresh / installs.
+    yum_repo_content: Optional[str] = None
+    # Backward-compatible alias: list of repo file lines. Joined with '\n' to form yum_repo_content.
+    yum_sources: List[str] = None
+    yum_repo_path: str = "/etc/yum.repos.d/almalinux.repo"
     
     def __post_init__(self):
         if self.apt_packages is None:
@@ -166,6 +174,11 @@ class UserDeclaration:
             self.exclude_env = []
         if self.apt_sources is None:
             self.apt_sources = []
+        if self.yum_repo_content is not None and not str(self.yum_repo_content).strip():
+            # Treat empty string as unset
+            self.yum_repo_content = None
+        if self.yum_sources is None:
+            self.yum_sources = []
 
 
 @dataclass

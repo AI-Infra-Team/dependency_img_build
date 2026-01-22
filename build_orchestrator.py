@@ -279,6 +279,7 @@ class BuildOrchestrator:
             
             # If we need to build package layers on top of a reused base, preview and run per-PM refresh
             if parent_image != declaration.base_image:
+                yum_repo_layer = self._make_yum_repo_layer(declaration)
                 managers_needed = sorted({
                     pm_for_layer_type(l.type).name
                     for l in layers_to_build
@@ -291,6 +292,8 @@ class BuildOrchestrator:
                     if pm and pm.needs_refresh and pm.refresh_cmd():
                         if pm_name == 'apt' and getattr(declaration, 'apt_sources', []):
                             planned_steps.append("script:apt_sources")
+                        if pm_name == 'yum' and yum_repo_layer is not None and yum_repo_layer.name not in reused_layer_names:
+                            planned_steps.append(f"script:{yum_repo_layer.name}")
                         planned_steps.append(f"script:{pm.name}_refresh")
                 planned_steps.extend([f"{l.type.value}:{l.name}" for l in layers_to_build])
                 if planned_steps:
@@ -315,6 +318,14 @@ class BuildOrchestrator:
                             )
                             image_tag = self._build_layer(sources_layer, parent_image, env_vars, declaration.image_name)
                             parent_image = image_tag
+                        # Write custom YUM repo before refreshing yum metadata (e.g., AlmaLinux -> Aliyun mirror).
+                        if pm_name == 'yum' and yum_repo_layer is not None and yum_repo_layer.name not in reused_layer_names and yum_repo_layer not in built_layers:
+                            print("   Writing custom YUM repo before refresh...")
+                            image_tag = self._build_layer(yum_repo_layer, parent_image, env_vars, declaration.image_name)
+                            parent_image = image_tag
+                            built_layers.append(yum_repo_layer)
+                            # If this layer is in the planned build list, skip building it again later.
+                            layers_to_build = [l for l in layers_to_build if l.name != yum_repo_layer.name]
                         cmd = pm.refresh_cmd()
                         if cmd:
                             refresh_layer = Layer(
@@ -336,9 +347,17 @@ class BuildOrchestrator:
             try:
                 for i, layer in enumerate(layers_to_build):
                     print(f"\n📦 Building layer {i+1}/{len(layers_to_build)}: {layer.name}")
-                    
+
                     # For the first package-manager layer when building from base, add metadata refresh
                     pm = pm_for_layer_type(layer.type)
+                    # Ensure custom yum repo is present before any yum operations.
+                    if pm and pm.name == 'yum':
+                        yum_repo_layer = self._make_yum_repo_layer(declaration)
+                        if yum_repo_layer is not None and yum_repo_layer.name not in reused_layer_names and yum_repo_layer not in built_layers:
+                            print("   Writing custom YUM repo before yum operations...")
+                            image_tag = self._build_layer(yum_repo_layer, parent_image, env_vars, declaration.image_name)
+                            parent_image = image_tag
+                            built_layers.append(yum_repo_layer)
                     if pm and parent_image == declaration.base_image and built_count == 0 and pm.needs_refresh and pm.refresh_cmd():
                         print(f"   Adding {pm.name} metadata refresh before first {pm.name} package...")
                         pm_update_layer = Layer(
@@ -657,6 +676,10 @@ class BuildOrchestrator:
             if apt_pm.refresh_cmd():
                 layers.append(Layer(name="apt_update", type=LayerType.SCRIPT, content=apt_pm.refresh_cmd()))
         if has_yum_packages:
+            # If custom YUM repo content is configured, write it before yum makecache.
+            repo_layer = self._make_yum_repo_layer(declaration)
+            if repo_layer is not None:
+                layers.append(repo_layer)
             yum_pm = PM_REGISTRY['yum']
             if yum_pm.refresh_cmd():
                 layers.append(Layer(name="yum_makecache", type=LayerType.SCRIPT, content=yum_pm.refresh_cmd()))
@@ -762,6 +785,47 @@ class BuildOrchestrator:
         return (
             f"printf '%s\\n' {quoted} > /etc/apt/sources.list && chmod 0644 /etc/apt/sources.list"
         )
+
+    def _render_yum_repo_commands(self, repo_content: str, repo_path: str) -> str:
+        """Render a one-liner to write a yum repo file inside the container.
+
+        Uses bash $'..' quoting so we can embed newlines without a heredoc (script layers are line-split).
+        Also normalizes '\\$' -> '$' to match common heredoc-escaping patterns.
+        """
+        import shlex
+        repo_path = (repo_path or "").strip() or "/etc/yum.repos.d/almalinux.repo"
+        # Normalize and ensure trailing newline (nicer repo files; safer for last line).
+        text = (repo_content or "").replace("\r\n", "\n").replace("\r", "\n")
+        text = text.replace("\\$", "$")
+        if text and not text.endswith("\n"):
+            text += "\n"
+
+        # Escape for bash ANSI-C quoting.
+        esc = text.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
+        quoted = f"$'{esc}'"
+        repo_dir = os.path.dirname(repo_path) or "/"
+        return (
+            f"mkdir -p {shlex.quote(repo_dir)}"
+            f" && printf '%b' {quoted} > {shlex.quote(repo_path)}"
+            f" && chmod 0644 {shlex.quote(repo_path)}"
+        )
+
+    def _make_yum_repo_layer(self, declaration: UserDeclaration) -> Optional[Layer]:
+        """Create a deterministic script layer that writes yum repo configuration (if configured)."""
+        content = getattr(declaration, "yum_repo_content", None)
+        if not content:
+            # Backward-compatible: yum_sources as list of lines.
+            sources = getattr(declaration, "yum_sources", None) or []
+            if sources:
+                # Preserve blank lines; do not strip.
+                content = "\n".join(str(x) for x in sources)
+        if not content:
+            return None
+        path = getattr(declaration, "yum_repo_path", None) or "/etc/yum.repos.d/almalinux.repo"
+        cmd = self._render_yum_repo_commands(str(content), str(path))
+        # Include path+content in the layer name so cache/reuse responds to repo changes.
+        h = hashlib.sha256((str(path) + "\n" + str(content)).encode("utf-8")).hexdigest()[:8]
+        return Layer(name=f"yum_repo_{h}", type=LayerType.SCRIPT, content=cmd)
     
     def _build_layer(self, layer: Layer, parent_image: str, env_vars: Dict[str, str], image_name: str) -> str:
         """Build a single layer using container snapshot (no Dockerfile)."""

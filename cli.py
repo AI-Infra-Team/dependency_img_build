@@ -112,6 +112,19 @@ def cmd_build(args):
         if base_image:
             items.append(f"base:{base_image}")
 
+        # yum repo override (content affects dependency resolution)
+        yum_repo_content = cfg.get('yum_repo_content')
+        yum_sources = cfg.get('yum_sources') or []
+        if (not yum_repo_content) and yum_sources:
+            yum_repo_content = "\n".join(str(x) for x in yum_sources)
+        if yum_repo_content:
+            import hashlib
+            yum_repo_path = cfg.get('yum_repo_path') or "/etc/yum.repos.d/almalinux.repo"
+            # Normalize common heredoc escaping of '$' -> keep yum vars like $releasever literal.
+            text = str(yum_repo_content).replace("\\$", "$")
+            h = hashlib.sha256((str(yum_repo_path) + "\n" + text).encode("utf-8")).hexdigest()[:12]
+            items.append(f"yumrepo:{h}")
+
         # top-level packages (legacy compatibility)
         for field, prefix in (("apt_packages", "apt"), ("yum_packages", "yum"), ("pip_packages", "pip")):
             for pkg in cfg.get(field, []) or []:
