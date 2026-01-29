@@ -95,8 +95,10 @@ class ContainerLayerBuilder:
 
     def _exec(self, container: str, command: str) -> int:
         shell = self._ensure_shell("")
-        # Allocate TTY by default to reduce buffering; keep STDIN open
-        exec_args = ['exec', '-i', '-t'] + self._env_args() + [container, shell, '-lc', command]
+        # Do not allocate a TTY here: CI/log collectors typically run without a TTY, and
+        # `docker exec -t` fails with: "the input device is not a TTY".
+        # Keep STDIN open so commands can run consistently across interactive/non-interactive runs.
+        exec_args = ['exec', '-i'] + self._env_args() + [container, shell, '-lc', command]
         print(f">>> Running in {container}: {command}")
         rc = self._docker(exec_args).returncode
         if rc != 0:
