@@ -4,6 +4,21 @@ from typing import Dict, Any
 from config import UserDeclaration, Stage, LightSetupConfig, ScriptInstall, HeavySetup
 
 
+def _parse_str_list_strict(value: Any, *, field_name: str) -> Any:
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        raise ValueError(f"{field_name} must be a list of non-empty strings")
+    out = []
+    for i, item in enumerate(value):
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError(f"{field_name}[{i}] must be a non-empty string")
+        out.append(item)
+    if not out:
+        raise ValueError(f"{field_name} must be a non-empty list")
+    return out
+
+
 class DeclarationParser:
     def __init__(self):
         pass
@@ -98,6 +113,10 @@ class DeclarationParser:
             image_name=data.get('image_name', 'my-app'),
             container_name=data.get('container_name', 'my-app-container'),
             image_tag=data.get('image_tag', 'latest'),
+
+            entrypoint=_parse_str_list_strict(data.get('entrypoint'), field_name='entrypoint'),
+            cmd=_parse_str_list_strict(data.get('cmd'), field_name='cmd'),
+
             # Environment configuration
             inherit_env=data.get('inherit_env', True),
             inherit_proxy=data.get('inherit_proxy', True),

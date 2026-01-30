@@ -1,4 +1,5 @@
 import hashlib
+import json
 import os
 from typing import List
 from config import UserDeclaration, Stage, BuildStep
@@ -23,8 +24,9 @@ class DockerfileGenerator:
             "# Auto-generated Dockerfile by dependency_img_build",
             "",
             "# Copy utility scripts",
-            "COPY scripts/apt_install.sh /usr/local/bin/apt_install.sh",
-            "COPY scripts/apt_remove.sh /usr/local/bin/apt_remove.sh", 
+            # In this repo, the build context is usually the repo root.
+            "COPY scripts/dependency_img_build/docker_build_tools/apt_install.sh /usr/local/bin/apt_install.sh",
+            "COPY scripts/dependency_img_build/docker_build_tools/apt_remove.sh /usr/local/bin/apt_remove.sh",
             "RUN chmod +x /usr/local/bin/apt_install.sh /usr/local/bin/apt_remove.sh",
             ""
         ]
@@ -33,6 +35,8 @@ class DockerfileGenerator:
         if declaration.heavy_setup:
             # Heavy Setup: APT packages
             dockerfile_lines.extend(self._generate_heavy_apt_packages(declaration))
+            # Heavy Setup: PIP packages
+            dockerfile_lines.extend(self._generate_heavy_pip_packages(declaration))
             # Heavy Setup: Script installations  
             dockerfile_lines.extend(self._generate_heavy_script_installs(declaration))
         
@@ -52,8 +56,38 @@ class DockerfileGenerator:
             dockerfile_lines.extend(self._generate_env_scripts(declaration))
             
         dockerfile_lines.extend(self._generate_user_setup(declaration))
+
+        entrypoint = getattr(declaration, 'entrypoint', None)
+        if entrypoint is not None:
+            dockerfile_lines.append(f"ENTRYPOINT {json.dumps(entrypoint)}")
+
+        cmd = getattr(declaration, 'cmd', None)
+        if cmd is not None:
+            dockerfile_lines.append(f"CMD {json.dumps(cmd)}")
         
         return '\n'.join(dockerfile_lines)
+
+    def _generate_heavy_pip_packages(self, declaration: UserDeclaration) -> List[str]:
+        """Generate heavy setup pip package installations.
+
+        We intentionally require `python3 -m pip` to exist in the base image.
+        If it does not, the build should fail fast.
+        """
+        lines: List[str] = []
+        if not declaration.heavy_setup or not declaration.heavy_setup.pip_packages:
+            return lines
+
+        pkgs = declaration.heavy_setup.pip_packages
+        pkgs_str = ' '.join(pkgs)
+        lines.append("# Heavy Setup: PIP Package Installation")
+        lines.extend(
+            [
+                f"RUN echo \"DEBUG: http_proxy=$http_proxy https_proxy=$https_proxy\" && \\",
+                f"    python3 -m pip install --no-cache-dir {pkgs_str}",
+                "",
+            ]
+        )
+        return lines
     
     def _generate_inherited_env_vars(self, declaration: UserDeclaration) -> List[str]:
         """Generate inherited environment variables section"""

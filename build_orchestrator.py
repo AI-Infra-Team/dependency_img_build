@@ -186,12 +186,8 @@ class BuildOrchestrator:
             base_repo, base_tag = self._parse_base_image(declaration.base_image)
             self.base_repo_slug = self._slugify(base_repo)
             self.base_tag_slug = self._slugify(base_tag or 'latest')
-            # Derive a stable hash from the absolute project path (config directory)
-            # This guarantees cross-project image isolation on a single host.
-            project_abs = os.path.abspath(getattr(self, 'config_dir', os.getcwd()))
-            self.project_path_hash = hashlib.sha256(project_abs.encode('utf-8')).hexdigest()[:12]
-            # Repository name and tag include project path hash for uniqueness
-            self.repo_name = f"{self.base_repo_slug}__{declaration.image_name}__p_{self.project_path_hash}"
+            # Global cache: do not isolate by project path (CI workspaces are per-run).
+            self.repo_name = f"{self.base_repo_slug}__{declaration.image_name}"
             
             if force_rebuild:
                 print("🔥 Force rebuild requested - ignoring cache")
@@ -382,13 +378,25 @@ class BuildOrchestrator:
                                 continue
                             if l in built_layers or l.name in reused_layer_names:
                                 if l.type in (LayerType.APT, LayerType.YUM, LayerType.PIP):
-                                    dep_items.append(f"{l.type.value}:{l.content}")
+                                    dep_items.append(f"{l.type.value}:{l.name}:{l.hash}")
                                 elif l.type == LayerType.SCRIPT:
                                     if l.name in maintenance_names or l.name.endswith("_cleanup_remove"):
                                         continue
-                                    dep_items.append(f"script:{l.name}")
+                                    dep_items.append(f"{l.type.value}:{l.name}:{l.hash}")
                     except Exception:
                         dep_items = []
+
+                    # Include the current layer itself in metadata for the image we are about to commit.
+                    # Without this, cached images may contain a layer that is not reflected in labels,
+                    # making the reuse mechanism unsound.
+                    try:
+                        if layer.type in (LayerType.APT, LayerType.YUM, LayerType.PIP):
+                            dep_items.append(f"{layer.type.value}:{layer.name}:{layer.hash}")
+                        elif layer.type == LayerType.SCRIPT:
+                            if layer.name not in maintenance_names and not layer.name.endswith("_cleanup_remove"):
+                                dep_items.append(f"{layer.type.value}:{layer.name}:{layer.hash}")
+                    except Exception:
+                        pass
 
                     # Commit layer
                     target_image_tag = self._format_layer_image_tag(layer, declaration.image_name)
@@ -398,7 +406,7 @@ class BuildOrchestrator:
                             parent_image,
                             target_image_tag,
                             copies=extra_copies,
-                            metadata_items=dep_items
+                            metadata_items=sorted(set(dep_items))
                         )
                     except Exception as be:
                         # Print manual reproduction hints
@@ -447,17 +455,17 @@ class BuildOrchestrator:
                     # Include built + reused layers only
                     if l in built_layers or l.name in reused_layer_names:
                         if l.type in (LayerType.APT, LayerType.YUM, LayerType.PIP):
-                            used_items.append(f"{l.type.value}:{l.content}")
+                            used_items.append(f"{l.type.value}:{l.name}:{l.hash}")
                         elif l.type == LayerType.SCRIPT:
                             # Skip maintenance/cleanup script markers in metadata
                             if l.name in maintenance_names or l.name.endswith("_cleanup_remove"):
                                 continue
-                            used_items.append(f"script:{l.name}")
+                            used_items.append(f"{l.type.value}:{l.name}:{l.hash}")
 
                 # Embed metadata into the image via labels (no filesystem writes)
                 if used_items:
                     print(f"   Embedding {len(used_items)} dependency items into image labels...")
-                    final_image = self._embed_dependency_metadata(final_image, used_items)
+                    final_image = self._embed_dependency_metadata(final_image, sorted(set(used_items)))
                     print(f"   Metadata labels embedded")
                 else:
                     print(f"   No dependency items to embed")
@@ -467,7 +475,7 @@ class BuildOrchestrator:
                 if final_image:
                     # New naming: repo = baseNameSlug__image_name, tag = baseTagSlug__image_tag
                     target_repo = self.repo_name
-                    target_tag = f"{self.base_tag_slug}__{declaration.image_tag}__p_{self.project_path_hash}"
+                    target_tag = f"{self.base_tag_slug}__{declaration.image_tag}"
                     target_ref = f"{target_repo}:{target_tag}"
                     print(f"   Final image: {final_image}")
                     print(f"   Target tag: {target_ref}")
@@ -526,9 +534,10 @@ class BuildOrchestrator:
         Returns the new image tag with metadata labels embedded.
         """
         import hashlib
+        items = sorted(set(items))
         content_hash = hashlib.sha256("\n".join(items).encode('utf-8')).hexdigest()[:12]
         # Tag includes project path hash for isolation across projects
-        meta_tag = f"{self.repo_name}:{self.base_tag_slug}__meta-{content_hash}__p_{self.project_path_hash}"
+        meta_tag = f"{self.repo_name}:{self.base_tag_slug}__meta-{content_hash}"
         # Use container builder to commit labels without changing filesystem
         builder = getattr(self, '_container_builder', None)
         if builder is None:
@@ -542,7 +551,7 @@ class BuildOrchestrator:
         name = self._slugify(layer.name)
         ltype = self._slugify(layer.type.value)
         # Include project path hash to prevent cross-project collisions for local cache layers
-        return f"{self.repo_name}:{self.base_tag_slug}__layer-{ltype}-{name}-{layer.hash}__p_{self.project_path_hash}"
+        return f"{self.repo_name}:{self.base_tag_slug}__layer-{ltype}-{name}-{layer.hash}"
 
     @staticmethod
     def _slugify(s: str) -> str:
@@ -561,9 +570,8 @@ class BuildOrchestrator:
         else:
             name = base_image
             tag = 'latest'
-        # Extract base repo name part (after last '/') for prefix human readability
-        base_repo = name.split('/')[-1]
-        return base_repo, tag
+        # Keep full base name (without tag) to avoid cross-registry collisions in global cache.
+        return name, tag
 
     # Note: Project code does not perform package presence checks; tests cover validation.
     
@@ -632,6 +640,105 @@ class BuildOrchestrator:
             print(f"Build failed during final tagging: {e}")
             return False
     
+    def _hash_copy_source_path(self, src_path: Path) -> str:
+        """Return a content hash for a copy source path (file/dir/symlink).
+
+        This is used to make cache reuse sound when a build layer copies host files into
+        the container: if any copied input changes, the layer hash must change too.
+
+        Note: Hashing directories walks all files. This is intentionally strict to
+        avoid reusing stale dependency layers.
+        """
+        if not src_path.exists() and not src_path.is_symlink():
+            raise FileNotFoundError(f"copy source path does not exist: {src_path}")
+
+        h = hashlib.sha256()
+
+        def _update(b: bytes) -> None:
+            h.update(b)
+
+        def _hash_file(path: Path) -> None:
+            st = path.lstat()
+            _update(b'F\0')
+            _update(str(int(st.st_mode & 0o777)).encode('ascii') + b'\0')
+            with open(path, 'rb') as f:
+                while True:
+                    chunk = f.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    _update(chunk)
+
+        def _hash_symlink(path: Path) -> None:
+            target = path.readlink()
+            _update(b'L\0')
+            _update(str(target).encode('utf-8', errors='strict') + b'\0')
+
+        if src_path.is_symlink():
+            _hash_symlink(src_path)
+            return h.hexdigest()
+
+        if src_path.is_file():
+            _hash_file(src_path)
+            return h.hexdigest()
+
+        if src_path.is_dir():
+            _update(b'D\0')
+            root = src_path
+            # Walk deterministically for stable hashing across machines.
+            for p in sorted(root.rglob('*'), key=lambda x: str(x.relative_to(root))):
+                rel = p.relative_to(root)
+                if p.is_symlink():
+                    _update(b'LS\0')
+                    _update(str(rel).encode('utf-8', errors='strict') + b'\0')
+                    _update(str(p.readlink()).encode('utf-8', errors='strict') + b'\0')
+                    continue
+                if p.is_dir():
+                    _update(b'DI\0')
+                    _update(str(rel).encode('utf-8', errors='strict') + b'\0')
+                    continue
+                if p.is_file():
+                    _update(b'FI\0')
+                    _update(str(rel).encode('utf-8', errors='strict') + b'\0')
+                    st = p.lstat()
+                    _update(str(int(st.st_mode & 0o777)).encode('ascii') + b'\0')
+                    with open(p, 'rb') as f:
+                        while True:
+                            chunk = f.read(1024 * 1024)
+                            if not chunk:
+                                break
+                            _update(chunk)
+                    continue
+            return h.hexdigest()
+
+        raise ValueError(f"unsupported copy source type: {src_path}")
+
+    def _hash_copies_for_script_layer(self, copies: List[str]) -> str:
+        """Hash the declared copies (including source content) for script layers.
+
+        Copy specs are strings like: "/abs/src/path:/container/dst/path".
+        Relative source paths (if any) are resolved against config_dir.
+        """
+        h = hashlib.sha256()
+        base = Path(getattr(self, 'config_dir', os.getcwd())).resolve()
+        for spec in copies:
+            if not isinstance(spec, str) or not spec.strip():
+                raise ValueError(f"invalid copy spec: {spec!r}")
+            if ':' not in spec:
+                raise ValueError(f"copy spec must be 'src:dst', got: {spec}")
+            src_s, dst_s = spec.split(':', 1)
+            src_s = src_s.strip()
+            dst_s = dst_s.strip()
+            if not src_s or not dst_s:
+                raise ValueError(f"copy spec must be 'src:dst' (non-empty), got: {spec}")
+            src_p = Path(src_s)
+            if not src_p.is_absolute():
+                src_p = (base / src_p).resolve()
+            # Include dst path because it can affect build behavior.
+            h.update(dst_s.encode('utf-8', errors='strict') + b'\0')
+            # Do not include absolute host paths in the hash: CI workspaces are per-run directories.
+            h.update(self._hash_copy_source_path(src_p).encode('ascii') + b'\0')
+        return h.hexdigest()
+
     def _parse_layers(self, declaration: UserDeclaration) -> List[Layer]:
         """Parse layers from declaration"""
         layers = []
@@ -700,6 +807,42 @@ class BuildOrchestrator:
                         type=LayerType.SCRIPT,
                         content=content
                     )
+                    # Include any copied inputs in the layer hash for cache correctness.
+                    # Otherwise, changing copied files would not invalidate reuse.
+                    try:
+                        inputs_h = hashlib.sha256()
+
+                        copies = list(getattr(script, 'copies', []) or [])
+                        if copies:
+                            inputs_h.update(b'copies\0')
+                            inputs_h.update(self._hash_copies_for_script_layer(copies).encode('ascii') + b'\0')
+
+                        # Also hash any file: inputs referenced by the script layer content.
+                        # This covers both script.file and explicit 'file:xxx' command lines.
+                        base = Path(getattr(self, 'config_dir', os.getcwd())).resolve()
+                        file_inputs: Set[str] = set()
+                        for raw in str(layer.content).splitlines():
+                            ln = raw.strip()
+                            if not ln.startswith('file:'):
+                                continue
+                            rel = ln.split(':', 1)[1].strip()
+                            if rel:
+                                file_inputs.add(rel)
+
+                        if file_inputs:
+                            inputs_h.update(b'files\0')
+                            for rel in sorted(file_inputs):
+                                src_p = (base / rel).resolve()
+                                inputs_h.update(rel.encode('utf-8', errors='strict') + b'\0')
+                                inputs_h.update(self._hash_copy_source_path(src_p).encode('ascii') + b'\0')
+
+                        inputs_digest = inputs_h.hexdigest()
+                        if copies or file_inputs:
+                            layer.hash = hashlib.sha256(
+                                f"{layer.type.value}:{layer.name}:{layer.content}|inputs:{inputs_digest}".encode('utf-8')
+                            ).hexdigest()[:8]
+                    except Exception as e:
+                        raise RuntimeError(f"failed to hash script layer inputs for {script.name}: {e}")
                     # Store original definition for container builder (copies, file, etc.)
                     try:
                         self._script_install_defs[script.name] = script

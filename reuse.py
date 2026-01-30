@@ -1,5 +1,5 @@
 """
-Layer reuse logic using set intersection and in-image metadata only.
+Layer reuse logic using order-insensitive prefix matching and in-image metadata only.
 No legacy JSON cache.
 
 Parallel image inspection uses daemon threads only (no processes).
@@ -110,35 +110,50 @@ class LayerReuseManager:
         _restore_tty()
         _println(f"{ICON_FIND} Finding optimal reuse strategy (in-image metadata)...")
 
-        # Build target set
-        target_set: Set[str] = set()
-        target_layer_map: Dict[str, Layer] = {}
+        # Build target signature for reuse selection.
+        #
+        # Reuse is decided by order-insensitive prefix matching, and items are content-hashed
+        # (type:name:hash). This guarantees that any layer content change invalidates reuse.
+        target_items_ordered: List[str] = []
+        target_items: Set[str] = set()
+        target_item_to_layer: Dict[str, Layer] = {}
         ordered_layers: List[Layer] = []
+
+        # Strict item format: "<type>:<name>:<hash>" where hash is 8 hex chars (Layer.calculate_hash()).
+        item_re = re.compile(r"^(apt|yum|pip|script):[^:]+:[0-9a-f]{8}$")
 
         for layer in target_layers:
             if layer.type == LayerType.BASE:
                 continue
-            if layer.type in (LayerType.APT, LayerType.YUM, LayerType.PIP):
-                item = f"{layer.type.value}:{layer.content}"
-                target_set.add(item)
-                target_layer_map[item] = layer
-            elif layer.type == LayerType.SCRIPT:
-                item = f"script:{layer.name}"
-                target_set.add(item)
-                target_layer_map[item] = layer
+            if layer.type in (LayerType.APT, LayerType.YUM, LayerType.PIP, LayerType.SCRIPT):
+                item = f"{layer.type.value}:{layer.name}:{layer.hash}"
+                if not item_re.fullmatch(item):
+                    raise ValueError(f"invalid target metadata item format: {item}")
+                target_items_ordered.append(item)
+                target_items.add(item)
+                target_item_to_layer[item] = layer
             ordered_layers.append(layer)
 
-        _println(f"{ICON_CLIP} Target items: {len(target_set)}")
+        _println(f"{ICON_CLIP} Target layers: {len(target_items)}")
+
+        # Precompute prefix sets for order-insensitive prefix matching.
+        # A cached image with k items is reusable only if its item set equals
+        # the set of the first k target items (same elements, any order).
+        prefix_sets: List[Set[str]] = [set()]
+        cur: Set[str] = set()
+        for it in target_items_ordered:
+            cur = set(cur)
+            cur.add(it)
+            prefix_sets.append(cur)
 
         # Gather candidate images
         candidates = self._list_local_images(preferred_repo, required_tag_prefix)
         _println(f"{ICON_WHALE} Candidates: {len(candidates)}")
 
         best_image: Optional[str] = None
-        best_intersection: Set[str] = set()
-        best_missing: Set[str] = set()
+        best_reused_n = 0
         best_score = float('-inf')
-        best_extra: Set[str] = set()
+        best_cached_items: List[str] = []
 
         # Parallel or sequential inspection
         workers = self.concurrency or min(8, max(1, len(candidates)))
@@ -146,47 +161,62 @@ class LayerReuseManager:
 
         print_lock = threading.Lock()
         def handle_result(image_tag: str, pkg_list: List[str], debug: Dict):
-            nonlocal best_score, best_image, best_intersection, best_missing, best_extra
+            nonlocal best_score, best_image, best_reused_n, best_cached_items
             with print_lock:
                 if not pkg_list:
                     if SUMMARY_ONLY:
                         first_cmd = (debug.get('commands') or [''])[0]
-                        _print_block([f"{ICON_INSPECT} {image_tag} | cmd: {first_cmd} | found: 0; reuse: 0; missing: {len(target_set)}; extra: 0; score: -inf"])
+                        _print_block([f"{ICON_INSPECT} {image_tag} | cmd: {first_cmd} | found: 0; missing: {len(target_items)}; score: -inf"])
                     else:
                         out = [f"{ICON_INSPECT} {image_tag}"]
                         out.extend([f"cmd: {c}" for c in debug.get('commands', [])])
-                        out.append(f"found: 0; reuse: 0; missing: {len(target_set)}; extra: 0; score: -inf")
+                        out.append(f"found: 0; missing: {len(target_items)}; score: -inf")
                         _print_block(out)
                     return
-                cached_set = set(pkg_list)
-                inter = target_set & cached_set
-                missing = target_set - cached_set
-                extra = cached_set - target_set
-                score = len(inter) * 100 - len(missing) * 50 - len(extra) * 0.01
-                if len(missing) == 0:
-                    score += 10000
+                cached_items = [str(x) for x in pkg_list if isinstance(x, str) and x.strip()]
+                # Only accept images that already use hashed metadata items.
+                # This prevents reusing images built with legacy, non-hashed metadata.
+                if any(item_re.fullmatch(it) is None for it in cached_items):
+                    score = float('-inf')
+                    cached_set: Set[str] = set()
+                    extra_n = 0
+                    missing_n = len(target_items)
+                else:
+                    cached_set = set(cached_items)
+                    extra_n = len(cached_set - target_items)
+                    if extra_n != 0:
+                        # Candidate has items not in target; do not reuse.
+                        score = float('-inf')
+                        missing_n = len(target_items)
+                    else:
+                        k = len(cached_set)
+                        # Order-insensitive prefix match: cached items must be exactly the first k target items.
+                        if k < len(prefix_sets) and cached_set == prefix_sets[k]:
+                            score = float(k)
+                            missing_n = len(target_items) - k
+                        else:
+                            score = float('-inf')
+                            missing_n = len(target_items)
                 if SUMMARY_ONLY:
                     first_cmd = (debug.get('commands') or [''])[0]
-                    line = f"{ICON_INSPECT} {image_tag} | cmd: {first_cmd} | found: {len(cached_set)}; reuse: {len(inter)}; missing: {len(missing)}; extra: {len(extra)}; score: {score:.2f}"
+                    line = f"{ICON_INSPECT} {image_tag} | cmd: {first_cmd} | found: {len(cached_set)}; missing: {missing_n}; extra: {extra_n}; score: {score}"
                     if score > best_score:
                         best_score = score
                         best_image = image_tag
-                        best_intersection = inter
-                        best_missing = missing
-                        best_extra = extra
+                        best_reused_n = len(cached_set)
+                        best_cached_items = list(cached_items)
                         line += f" | {ICON_STAR}"
                     _print_block([line])
                 else:
                     out = [f"{ICON_INSPECT} {image_tag}"]
                     out.extend([f"cmd: {c}" for c in debug.get('commands', [])])
-                    out.append(f"found: {len(cached_set)}; reuse: {len(inter)}; missing: {len(missing)}; extra: {len(extra)}; score: {score:.2f}")
+                    out.append(f"found: {len(cached_set)}; missing: {missing_n}; extra: {extra_n}; score: {score}")
                     if score > best_score:
                         best_score = score
                         best_image = image_tag
-                        best_intersection = inter
-                        best_missing = missing
-                        best_extra = extra
-                        out.append(f"{ICON_STAR} Best so far -> {best_image} (reuse {len(best_intersection)}, missing {len(best_missing)})")
+                        best_reused_n = len(cached_set)
+                        best_cached_items = list(cached_items)
+                        out.append(f"{ICON_STAR} Best so far -> {best_image} (reused={best_reused_n}, missing={len(target_items)-best_reused_n})")
                     _print_block(out)
 
         if workers > 1 and candidates:
@@ -233,40 +263,34 @@ class LayerReuseManager:
             for image_tag in candidates:
                 pkg_list, debug = self._read_packages_from_image_metadata(image_tag)
                 handle_result(image_tag, pkg_list, debug)
-
         reused_layer_names: Set[str] = set()
         layers_to_build: List[Layer] = []
         cleanup_commands: List[Dict] = []
 
-        if best_image and best_intersection:
-            _println(f"{ICON_CHECK} Best base: {best_image} (reuse {len(best_intersection)})")
+        if best_image and best_reused_n > 0 and best_cached_items:
+            cached_set = set(best_cached_items)
+            _println(f"{ICON_CHECK} Best base: {best_image} (reused={len(cached_set)}, missing={len(target_items - cached_set)})")
             _restore_tty()
-            if best_extra:
-                cleanup_commands = self.generate_cleanup_commands(best_extra)
 
-            if len(best_missing) == 0:
-                # Everything present; only configs need rebuild
-                for layer in ordered_layers:
-                    if layer.type == LayerType.CONFIG:
-                        layers_to_build.append(layer)
-                    elif layer.type in (LayerType.APT, LayerType.YUM, LayerType.PIP, LayerType.SCRIPT):
-                        reused_layer_names.add(layer.name)
-            else:
-                for item in best_intersection:
-                    if item in target_layer_map:
-                        reused_layer_names.add(target_layer_map[item].name)
-                for layer in ordered_layers:
-                    if layer.type == LayerType.CONFIG:
-                        layers_to_build.append(layer)
-                    elif layer.type in (LayerType.APT, LayerType.YUM, LayerType.PIP):
-                        if f"{layer.type.value}:{layer.content}" not in best_intersection:
-                            layers_to_build.append(layer)
-                    elif layer.type == LayerType.SCRIPT:
-                        if f"script:{layer.name}" not in best_intersection:
-                            layers_to_build.append(layer)
+            # Reuse any layer whose content-hash item is already present in the cached image.
+            # Order of the cached metadata list is ignored by design.
+            for layer in ordered_layers:
+                if layer.type == LayerType.CONFIG:
+                    layers_to_build.append(layer)
+                    continue
+
+                if layer.type not in (LayerType.APT, LayerType.YUM, LayerType.PIP, LayerType.SCRIPT):
+                    continue
+
+                item = f"{layer.type.value}:{layer.name}:{layer.hash}"
+                if item in cached_set:
+                    reused_layer_names.add(layer.name)
+                else:
+                    layers_to_build.append(layer)
+
             return best_image, reused_layer_names, layers_to_build, cleanup_commands
 
-        # Fallback: build from base image (first layer content) when no candidate works
+        # No suitable base found, build from scratch
         _println(f"{ICON_CROSS} No suitable base found, building from scratch")
         _restore_tty()
         base_image = target_layers[0].content if target_layers else "ubuntu:22.04"

@@ -150,6 +150,15 @@ def cmd_build(args):
 
         # Normalize ordering & uniqueness
         items = sorted(set(items))
+
+        # Runtime behavior becomes part of the image contract once enabled.
+        # We include it in checksum so changes trigger rebuild.
+        if 'entrypoint' in cfg:
+            items.append(f"entrypoint:{json.dumps(cfg.get('entrypoint'), sort_keys=True)}")
+        if 'cmd' in cfg:
+            items.append(f"cmd:{json.dumps(cfg.get('cmd'), sort_keys=True)}")
+
+        items = sorted(set(items))
         return items
 
     cfg = _load_config_dict(args.config)

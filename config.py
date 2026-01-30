@@ -166,6 +166,13 @@ class UserDeclaration:
     image_name: str = "my-app"
     container_name: str = "my-app-container"
     image_tag: str = "latest"
+
+    # Runtime: image entrypoint/cmd
+    #
+    # We intentionally support list-form only to keep the interface explicit
+    # and avoid ambiguous shell parsing.
+    entrypoint: Optional[List[str]] = None
+    cmd: Optional[List[str]] = None
     
     # Environment configuration
     inherit_env: bool = True

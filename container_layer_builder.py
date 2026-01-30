@@ -222,9 +222,11 @@ class ContainerLayerBuilder:
             if metadata_items:
                 try:
                     import hashlib, json as _json, base64, datetime as _dt
-                    payload_json = _json.dumps(list(metadata_items), separators=(',', ':'))
+                    # Treat metadata_items as a set: order is not meaningful for cache identity.
+                    items_sorted = sorted(set(metadata_items))
+                    payload_json = _json.dumps(list(items_sorted), separators=(',', ':'))
                     payload_b64 = base64.b64encode(payload_json.encode('utf-8')).decode('ascii')
-                    cache_key = hashlib.sha256("\n".join(metadata_items).encode('utf-8')).hexdigest()
+                    cache_key = hashlib.sha256("\n".join(items_sorted).encode('utf-8')).hexdigest()
                     created = _dt.datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')
                     labels = {
                         IMAGE_LABEL_VERSION: '1',
