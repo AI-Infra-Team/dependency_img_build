@@ -42,6 +42,27 @@ class ContainerLayerBuilder:
 
     def _docker(self, args: List[str], env: Optional[Dict[str, str]] = None, capture: bool = False, cwd: Optional[str] = None, timeout: Optional[int] = None) -> subprocess.CompletedProcess:
         cmd = sudo_prefix() + ['docker'] + args
+        # Docker commands often print opaque IDs on stdout (container id / image id).
+        # Emit a short hint line before running to make CI logs self-explanatory.
+        hint = ''
+        if args:
+            sub = args[0]
+            if sub in ('start', 'stop'):
+                hint = 'stdout: container id'
+            elif sub in ('commit', 'import'):
+                hint = 'stdout: image id (sha256:...)'
+            elif sub == 'create':
+                hint = 'stdout: container id'
+            elif sub == 'cp':
+                hint = 'stdout: empty on success'
+            elif sub == 'export':
+                hint = 'stdout: empty on success (writes tar)'
+            elif sub in ('rm', 'rmi', 'tag'):
+                hint = 'stdout: usually empty on success'
+        line = '[docker] ' + shlex.join(cmd)
+        if hint:
+            line += '  # ' + hint
+        print(line, flush=True)
         if capture:
             return subprocess.run(cmd, env=env, cwd=cwd, text=True, capture_output=True, timeout=timeout)
         return subprocess.run(cmd, env=env, cwd=cwd, timeout=timeout)
@@ -111,7 +132,17 @@ class ContainerLayerBuilder:
             if rc != 0:
                 raise RuntimeError(f"Command failed (#{idx}): {cmd}")
 
-    def build_layer(self, layer: Layer, parent_image: str, image_tag: str, *, copies: Optional[List[str]] = None, metadata_items: Optional[List[str]] = None) -> str:
+    def build_layer(
+        self,
+        layer: Layer,
+        parent_image: str,
+        image_tag: str,
+        *,
+        copies: Optional[List[str]] = None,
+        metadata_items: Optional[List[str]] = None,
+        entrypoint: Optional[List[str]] = None,
+        cmd: Optional[List[str]] = None,
+    ) -> str:
         """Build a layer by mutating a container from parent_image and committing to image_tag.
 
         copies: list of "src:dst" mappings (src relative to config_dir)
@@ -179,7 +210,8 @@ class ContainerLayerBuilder:
                     if layer.name in ("yum_makecache", "yum_refresh"):
                         cmds.append(yum_makecache_refresh_cmd())
                     else:
-                        cmds.append(f'yum install -y {shlex.quote(pkg)}')
+                        # Disable epel* by default: manylinux images often ship EPEL enabled, but it may be unreachable in CI networks.
+                        cmds.append(f"yum install -y --disablerepo='epel*' {shlex.quote(pkg)}")
                 else:  # pip
                     cmds.append(f'python3 -m pip install --no-cache-dir {shlex.quote(pkg)}')
             elif layer.type in (LayerType.SCRIPT, LayerType.CONFIG):
@@ -235,10 +267,19 @@ class ContainerLayerBuilder:
                         IMAGE_LABEL_ITEMS_B64: payload_b64,
                     }
                     parts = [f"{k}={v}" for k, v in labels.items()]
-                    change_args = ['--change', 'LABEL ' + ' '.join(parts)]
+                    change_args += ['--change', 'LABEL ' + ' '.join(parts)]
                 except Exception as _e:
                     print(f"⚠️  Failed to prepare label metadata: {_e}")
                     change_args = []
+
+            if entrypoint is not None:
+                # Use JSON list-form only; this keeps the interface unambiguous.
+                import json as _json
+                change_args += ['--change', 'ENTRYPOINT ' + _json.dumps(entrypoint)]
+
+            if cmd is not None:
+                import json as _json
+                change_args += ['--change', 'CMD ' + _json.dumps(cmd)]
 
             # Try commit first
             print("   Committing container snapshot to image tag...")

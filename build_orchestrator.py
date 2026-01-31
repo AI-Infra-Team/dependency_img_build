@@ -442,7 +442,7 @@ class BuildOrchestrator:
                         print(f"⚠️  Failed to delete base image {reused_base_tag}: {de}")
                 raise
             
-            # Tag final image (embed dependency metadata first)
+            # Tag final image (embed dependency metadata and runtime config first)
             print(f"\n🏷️  Tagging final image...")
             final_image = parent_image
             try:
@@ -462,13 +462,24 @@ class BuildOrchestrator:
                                 continue
                             used_items.append(f"{l.type.value}:{l.name}:{l.hash}")
 
-                # Embed metadata into the image via labels (no filesystem writes)
-                if used_items:
-                    print(f"   Embedding {len(used_items)} dependency items into image labels...")
-                    final_image = self._embed_dependency_metadata(final_image, sorted(set(used_items)))
-                    print(f"   Metadata labels embedded")
+                entrypoint = getattr(declaration, 'entrypoint', None)
+                cmd = getattr(declaration, 'cmd', None)
+                if used_items or entrypoint is not None or cmd is not None:
+                    if used_items:
+                        print(f"   Embedding {len(used_items)} dependency items into image labels...")
+                    if entrypoint is not None:
+                        print(f"   Applying runtime entrypoint: {entrypoint}")
+                    if cmd is not None:
+                        print(f"   Applying runtime cmd: {cmd}")
+                    final_image = self._embed_dependency_metadata(
+                        final_image,
+                        sorted(set(used_items)),
+                        entrypoint=entrypoint,
+                        cmd=cmd,
+                    )
+                    print(f"   Metadata/runtime config embedded")
                 else:
-                    print(f"   No dependency items to embed")
+                    print(f"   No dependency items or runtime config to embed")
             except Exception as e:
                 print(f"⚠️  Failed to embed metadata into image: {e}")
             else:
@@ -528,14 +539,33 @@ class BuildOrchestrator:
         if result.returncode != 0:
             raise RuntimeError(result.stderr.strip() or f"Failed to remove image {image_tag}")
 
-    def _embed_dependency_metadata(self, base_image: str, items: List[str]) -> str:
-        """Create a tiny layer on top of base_image with dependency labels only, then commit.
+    def _embed_dependency_metadata(
+        self,
+        base_image: str,
+        items: List[str],
+        *,
+        entrypoint: Optional[List[str]] = None,
+        cmd: Optional[List[str]] = None,
+    ) -> str:
+        """Create a tiny layer on top of base_image and commit.
 
-        Returns the new image tag with metadata labels embedded.
+        This layer is used as a stable place to attach:
+        - dependency labels (optional)
+        - runtime ENTRYPOINT/CMD (optional)
         """
         import hashlib
         items = sorted(set(items))
-        content_hash = hashlib.sha256("\n".join(items).encode('utf-8')).hexdigest()[:12]
+        parts: List[str] = []
+        if items:
+            parts.append("\n".join(items))
+        if entrypoint is not None:
+            import json as _json
+            parts.append("entrypoint=" + _json.dumps(entrypoint, separators=(',', ':')))
+        if cmd is not None:
+            import json as _json
+            parts.append("cmd=" + _json.dumps(cmd, separators=(',', ':')))
+
+        content_hash = hashlib.sha256("\n".join(parts).encode('utf-8')).hexdigest()[:12]
         # Tag includes project path hash for isolation across projects
         meta_tag = f"{self.repo_name}:{self.base_tag_slug}__meta-{content_hash}"
         # Use container builder to commit labels without changing filesystem
@@ -544,7 +574,15 @@ class BuildOrchestrator:
             builder = ContainerLayerBuilder({}, config_dir=getattr(self, 'config_dir', os.getcwd()), preserve_on_failure=True)
         dummy_layer = Layer(name=f"meta_{content_hash}", type=LayerType.SCRIPT, content=":")
         print(f"   Embedding dependency metadata labels via container commit: {meta_tag}")
-        return builder.build_layer(dummy_layer, base_image, meta_tag, copies=None, metadata_items=items)
+        return builder.build_layer(
+            dummy_layer,
+            base_image,
+            meta_tag,
+            copies=None,
+            metadata_items=items if items else None,
+            entrypoint=entrypoint,
+            cmd=cmd,
+        )
 
     def _format_layer_image_tag(self, layer: Layer, image_name: str) -> str:
         """Format the image tag for a layer using naming scheme."""

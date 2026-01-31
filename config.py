@@ -9,6 +9,9 @@ IMAGE_DEP_METADATA_PATH = "/opt/dependency_img_build/dependencies.list"
 
 # YUM metadata refresh throttling (timestamp lives inside the image/container).
 # Motivation: `yum makecache` is expensive and often redundant across incremental builds.
+# Note: manylinux images often have EPEL enabled by default; in some CI networks EPEL mirrorlist TLS fails.
+# We disable epel* for yum metadata refresh and yum installs to keep builds deterministic.
+# If you need EPEL packages, add an explicit script layer to re-enable the repo.
 YUM_MAKECACHE_STAMP_PATH = "/var/cache/dependency_img_build/yum_makecache_last_epoch"
 YUM_MAKECACHE_TTL_DAYS = 30
 YUM_MAKECACHE_TTL_SECONDS = YUM_MAKECACHE_TTL_DAYS * 24 * 60 * 60
@@ -29,7 +32,7 @@ def yum_makecache_refresh_cmd() -> str:
         "fi; "
         "fi; "
         "echo \"Run yum makecache (stamp=$stamp, ttl=${ttl_secs}s)\"; "
-        "yum makecache; "
+        "yum makecache --disablerepo='epel*'; "
         "mkdir -p \"$(dirname \"$stamp\")\"; "
         "printf '%s\\n' \"$now\" > \"$stamp\""
     )
